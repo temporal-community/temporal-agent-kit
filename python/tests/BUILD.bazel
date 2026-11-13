@@ -400,3 +400,16 @@ agent_kit_pytest_test(
         "@pypi//temporalio",
     ],
 )
+
+agent_kit_pytest_test(
+    name = "test_git_filesystem",
+    srcs = ["test_git_filesystem.py"],
+    imports = [".."],
+    deps = [
+        ":conftest",
+        "//python/temporal_agent_kit:agent",
+        "//python/temporal_agent_kit/code_mode:activity_fs",
+        "@pypi//pytest",
+        "@pypi//temporalio",
+    ],
+)

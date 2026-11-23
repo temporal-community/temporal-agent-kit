@@ -11,7 +11,7 @@ class SetModel(BaseModel):
 
     # A Literal, not a bare str: pydantic enforces it at the update boundary AND emits it as
     # an enum in the handler's `parameters` schema, so a generic client renders a dropdown.
-    model: Literal["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    model: Literal["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
 
 @agent.defn

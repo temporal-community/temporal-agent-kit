@@ -41,7 +41,7 @@ export const OpenAIHelloAgentTs = defineAgent({
         const sdkAgent = new Agent({
           name: "Hello",
           instructions: "Answer briefly. For weather questions, call get_weather and explain that it returns sample data.",
-          model: "gpt-5.1",
+          model: "gpt-6-sol",
           tools: [asOpenAIAgentTool(runner, getWeather)],
         });
         const input: AgentInputItem[] = [...conversation, { role: "user", content: text }];

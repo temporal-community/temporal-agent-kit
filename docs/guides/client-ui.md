@@ -65,7 +65,7 @@ class TicTacToeAgentWorkflow:
         self._sdk_agent = Agent(
             name="TicTacToe",
             instructions="You play O. Record the player's X with place_mark, then place your O.",
-            model="gpt-5.1",
+            model="gpt-6-sol",
             tools=[as_openai_agent_tool(self._runner, place_mark, injections={"board": self.board})],
         )
 

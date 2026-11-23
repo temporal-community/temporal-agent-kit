@@ -41,7 +41,7 @@ import { ALL_TOOLS } from "./activities.ts";
 import { askUser } from "./ask-user.ts";
 import { BOARD_TOOLS, BOARD_TOOL_NAMES, TripBoard } from "./trip-board.ts";
 
-export const SUPPORTED_MODELS = ["gemini-3.8-flash", "gemini-3.1-flash-lite"] as const;
+export const SUPPORTED_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as const;
 const DEFAULT_MODEL = SUPPORTED_MODELS[0];
 
 // An enum (not a bare string) so the choice is enforced rather than merely suggested: the update

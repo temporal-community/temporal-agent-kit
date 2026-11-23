@@ -51,7 +51,7 @@ class ChatAgent:
     async def ask(self, message: TextMessage) -> TextReply:
         """Chat with the assistant."""
         result = Runner.run_streamed(
-            Agent(name="Assistant", instructions="Answer briefly.", model="gpt-5.1"),
+            Agent(name="Assistant", instructions="Answer briefly.", model="gpt-6-sol"),
             input=[*self.history, {"role": "user", "content": message.text}],
             context=self.runner,
         )
@@ -79,7 +79,7 @@ export const ChatAgent = defineAgent({
       async ask({ text }) {
         const result = await runStreamed(
           runner,
-          new Agent({ name: "Assistant", instructions: "Answer briefly.", model: "gpt-5.1" }),
+          new Agent({ name: "Assistant", instructions: "Answer briefly.", model: "gpt-6-sol" }),
           [...history, { role: "user", content: text }],
           { defaultModelParams: { startToCloseTimeout: "2 minutes", heartbeatTimeout: "30 seconds" } },
         );

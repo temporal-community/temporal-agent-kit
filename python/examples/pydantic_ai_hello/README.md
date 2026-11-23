@@ -19,7 +19,7 @@ seam could be added), Pydantic AI's Temporal support is used **unmodified** from
   Agent Kit vocabulary: `model_interaction_started` → `reply_delta` / `thought_summary` …
   `tool_requested` … `model_interaction_ended` (with the call's token usage). All of it is
   published from the activity, like the other integrations.
-- **Choosing the model.** Give the agent a model-name string such as `"openai:gpt-5.1"` (as this
+- **Choosing the model.** Give the agent a model-name string such as `"openai:gpt-6-sol"` (as this
   example does), and the capability wraps the model the worker builds from it. A `Model` instance
   must be passed as `kit_model(instance)`; an unwrapped instance is rejected when the agent is
   built, since it would run without any turn streaming. To build models from their names yourself

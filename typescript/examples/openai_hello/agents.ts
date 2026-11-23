@@ -26,7 +26,7 @@ import {
 } from "@temporalio/agent-kit/ai-sdks/openai-agents";
 
 export const TASK_QUEUE = "openai-hello-ts";
-export const DEFAULT_MODEL = "gpt-5.1";
+export const DEFAULT_MODEL = "gpt-6-sol";
 
 const SYSTEM_INSTRUCTION = `\
 You are a friendly assistant. Answer the user in brief, natural prose.

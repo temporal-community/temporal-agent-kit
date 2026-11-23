@@ -101,7 +101,7 @@ from temporal_agent_kit.ai_sdks.strands_agents import kit_observer_factory
 from temporal_agent_kit.plugin import AgentKitPlugin
 
 strands = StrandsPlugin(
-    models={"openai": lambda: OpenAIModel(model_id="gpt-5.1")},
+    models={"openai": lambda: OpenAIModel(model_id="gpt-6-sol")},
     sandboxes={"scratch": build_sandbox},  # see Sandboxes
     observer_factory=kit_observer_factory,
 )

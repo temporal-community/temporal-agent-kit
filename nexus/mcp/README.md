@@ -225,7 +225,7 @@ nexus_tools = NexusToolset.for_service(
     "weather",
     "weather-endpoint",
 )
-agent = Agent("openai:gpt-5.1", toolsets=[nexus_tools])
+agent = Agent("openai:gpt-6-sol", toolsets=[nexus_tools])
 result = await agent.run("What is the forecast for Boston?")
 ```
 

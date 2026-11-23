@@ -57,7 +57,7 @@ def google_genai_client(
             async def run(self, query: str) -> str:
                 client = google_genai_client()
                 response = await client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-3.6-flash",
                     contents=query,
                     config=GenerateContentConfig(
                         tools=[my_tool],  # an @agent.activity_tool_defn object

@@ -353,7 +353,7 @@ handler whose input model is `{"model": Literal["a", "b"]}` is driven with:
 ```json
 {
   "type": "set_model",
-  "payload": { "model": "gemini-3.1-flash-lite" }
+  "payload": { "model": "gemini-3.5-flash-lite" }
 }
 ```
 

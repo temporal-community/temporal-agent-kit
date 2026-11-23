@@ -176,7 +176,7 @@ class TemporalApiClient(BaseApiClient):
         """Dispatch an async API request through a Temporal activity."""
         config: ActivityConfig = {**self._activity_config}
         if "summary" not in config:
-            # Default summary is the API path (e.g. "models/gemini-2.5-flash:generateContent").
+            # Default summary is the API path (e.g. "models/gemini-3.8-flash:generateContent").
             config["summary"] = f"{http_method.upper()} {path}"
         overrides = self._process_http_options(http_options, config)
 

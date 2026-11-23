@@ -28,7 +28,7 @@ import { StrandsPlugin } from "@temporalio/agent-kit-worker/ai-sdks/strands-agen
 import { kitObserverFactory } from "@temporalio/agent-kit-worker/ai-sdks/strands-agents";
 import { MODEL, TASK_QUEUE, getLocalTime } from "./agents.ts";
 
-const OPENAI_MODEL_ID = "gpt-5.1";
+const OPENAI_MODEL_ID = "gpt-6-sol";
 
 // Under `bazel run`, run from the workspace root, so repo-relative paths (.env.local's
 // TEMPORAL_CONFIG_FILE) resolve.

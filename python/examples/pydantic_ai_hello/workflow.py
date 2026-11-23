@@ -43,7 +43,7 @@ with workflow.unsafe.imports_passed_through():
 
 TASK_QUEUE = "pydantic-ai-hello"
 AGENT_NAME = "pydantic-ai-hello"
-DEFAULT_MODEL = "openai:gpt-5.1"
+DEFAULT_MODEL = "openai:gpt-6-sol"
 TOOLSET_ID = "hello-tools"
 
 SYSTEM_INSTRUCTION = """\

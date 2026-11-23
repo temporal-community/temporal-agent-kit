@@ -43,7 +43,7 @@ with workflow.unsafe.imports_passed_through():
     from temporal_agent_kit.agent_workflow import AgentWorkflowRunner
 
 TASK_QUEUE = "nexus-hello"
-DEFAULT_MODEL = "gpt-5.1"
+DEFAULT_MODEL = "gpt-6-sol"
 
 SYSTEM_INSTRUCTION = """\
 You are a friendly assistant. Answer the user in brief, natural prose.

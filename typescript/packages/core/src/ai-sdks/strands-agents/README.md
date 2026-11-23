@@ -104,7 +104,7 @@ const worker = await Worker.create({
   workflowsPath: fileURLToPath(new URL("./agents.js", import.meta.url)),
   plugins: [
     new StrandsPlugin({
-      models: { openai: () => new OpenAIModel({ modelId: "gpt-5.1" }) },
+      models: { openai: () => new OpenAIModel({ modelId: "gpt-6-sol" }) },
       observerFactory: kitObserverFactory,
     }),
     new AgentKitPlugin({ tools: [/* toolActivity(...) for each activityTool */] }),

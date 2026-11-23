@@ -44,7 +44,7 @@ from temporal_agent_kit.ai_sdks.strands_agents import kit_observer_factory
 from temporal_agent_kit.plugin import AgentKitPlugin
 from temporal_agent_kit.utils.task_queue import task_queue_name
 
-OPENAI_MODEL_ID = "gpt-5.1"
+OPENAI_MODEL_ID = "gpt-6-sol"
 
 
 async def main() -> None:

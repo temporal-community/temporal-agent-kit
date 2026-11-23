@@ -67,7 +67,7 @@ with workflow.unsafe.imports_passed_through():
 
 # Its own queue, not Monty's: every worker on a queue must register the same workflow types.
 TASK_QUEUE = "auto-mode-agent"
-SUPPORTED_MODELS = ("gemini-3.8-flash", "gemini-3.1-flash-lite")
+SUPPORTED_MODELS = ("gemini-3.8-flash", "gemini-3.5-flash-lite")
 DEFAULT_MODEL = SUPPORTED_MODELS[0]
 
 

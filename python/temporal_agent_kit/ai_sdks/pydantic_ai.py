@@ -21,7 +21,7 @@ Wire it onto a worker with the upstream plugin, unmodified:
 ... )
 >>> toolset = build_kit_toolset([my_tool], id="my-tools")  # runs in-workflow, not in an activity
 >>> durable_agent = Agent(
-...     "openai:gpt-5.1",  # a model-name string: see TemporalAgentKitDurability
+...     "openai:gpt-6-sol",  # a model-name string: see TemporalAgentKitDurability
 ...     name="my-agent",
 ...     deps_type=KitDeps,
 ...     toolsets=[toolset],
@@ -444,7 +444,7 @@ class TemporalAgentKitDurability(TemporalDurability[AgentDepsT]):
     Use it in place of ``TemporalDurability``; it takes the same arguments except
     ``event_stream_handler``, which it sets to :func:`kit_event_stream_handler`::
 
-        Agent("openai:gpt-5.1", name="my-agent", deps_type=KitDeps, toolsets=[toolset],
+        Agent("openai:gpt-6-sol", name="my-agent", deps_type=KitDeps, toolsets=[toolset],
               capabilities=[TemporalAgentKitDurability()])
 
     It also wraps each model it resolves in a :class:`KitStreamingModel`. Inside the
@@ -483,7 +483,7 @@ class TemporalAgentKitDurability(TemporalDurability[AgentDepsT]):
                 f"Agent {agent.name!r} has a {type(model).__name__} instance as its model, which "
                 "TemporalAgentKitDurability cannot stream from. Wrap it: "
                 "Agent(kit_model(<model>), ...), or pass a model-name string such as "
-                "'openai:gpt-5.1'."
+                "'openai:gpt-6-sol'."
             )
         # Durability capabilities bind last, so every other capability is already in the tree.
         resolvers: list[AbstractCapability[AgentDepsT]] = []
@@ -524,7 +524,7 @@ class TemporalAgentKitDurability(TemporalDurability[AgentDepsT]):
 def kit_model(model: Model) -> KitStreamingModel:
     """Wrap a ``Model`` instance so a :class:`TemporalAgentKitDurability` agent streams from it::
 
-        Agent(kit_model(OpenAIChatModel("gpt-5.1", provider=...)), name="my-agent", ...,
+        Agent(kit_model(OpenAIChatModel("gpt-6-sol", provider=...)), name="my-agent", ...,
               capabilities=[TemporalAgentKitDurability()])
 
     A model-name string needs no wrapping; the capability wraps what it resolves."""
@@ -641,7 +641,7 @@ def build_kit_toolset(
     via ``deps``) and pass it to the agent::
 
         toolset = build_kit_toolset([get_weather], id="hello-tools")
-        agent = Agent("openai:gpt-5.1", toolsets=[toolset], capabilities=[TemporalAgentKitDurability()])
+        agent = Agent("openai:gpt-6-sol", toolsets=[toolset], capabilities=[TemporalAgentKitDurability()])
 
     Every tool carries ``metadata={"temporal": False}``, which tells ``TemporalDurability`` not to
     wrap its calls in an activity. The harness needs them in-workflow for its approval gate

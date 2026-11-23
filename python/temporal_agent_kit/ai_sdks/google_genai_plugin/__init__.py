@@ -49,7 +49,7 @@ Quickstart::
         async def run(self, query: str) -> str:
             client = google_genai_client()
             response = await client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.8-flash",
                 contents=query,
                 config=types.GenerateContentConfig(tools=[get_weather]),
             )

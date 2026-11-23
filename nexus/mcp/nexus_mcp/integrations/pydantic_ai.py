@@ -17,7 +17,7 @@ Example::
         "weather",
         "weather-endpoint",
     )
-    agent = Agent("openai:gpt-5.1", toolsets=[nexus_tools])
+    agent = Agent("openai:gpt-6-sol", toolsets=[nexus_tools])
 """
 
 from __future__ import annotations

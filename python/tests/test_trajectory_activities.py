@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
-from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -15,29 +13,15 @@ from temporal_agent_kit.agent_protocol import (
     TurnEnded,
 )
 from temporal_agent_kit.trajectory_activities import AgentTurn, TrajectoryActivities
-from temporal_agent_kit.utils.large_payload import local_payload_storage
 from temporalio import workflow
-from temporalio.api.common.v1 import Payload
 from temporalio.client import WorkflowFailureError
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.converter import PayloadCodec
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from tests.conformance.script import ModelStep, Script, ToolStep
 from tests.conformance.scripted_agent import ScriptedAgent
-
-
-class TestPayloadCodec(PayloadCodec):
-    async def encode(self, payloads: Sequence[Payload]) -> list[Payload]:
-        return [
-            Payload(metadata={"encoding": b"binary/test"}, data=item.SerializeToString()[::-1])
-            for item in payloads
-        ]
-
-    async def decode(self, payloads: Sequence[Payload]) -> list[Payload]:
-        return [Payload.FromString(item.data[::-1]) for item in payloads]
 
 
 @workflow.defn
@@ -52,16 +36,10 @@ class CaptureTrajectory:
 
 
 @pytest.fixture
-async def worker(tmp_path):
-    converter = replace(
-        pydantic_data_converter,
-        payload_codec=TestPayloadCodec(),
-        external_storage=local_payload_storage(
-            base_dir=tmp_path / "automatic", payload_size_threshold=1_000
-        ),
-    )
-    async with await WorkflowEnvironment.start_local(data_converter=converter) as env:
-        trajectory = TrajectoryActivities(env.client)
+async def worker(request):
+    async with await WorkflowEnvironment.start_local(data_converter=pydantic_data_converter) as env:
+        stream_timeout = getattr(request, "param", timedelta(seconds=30))
+        trajectory = TrajectoryActivities(env.client, stream_timeout=stream_timeout)
         async with Worker(
             env.client,
             task_queue="trajectory-tests",
@@ -83,7 +61,7 @@ async def test_capture_returns_native_events_through_the_requested_turn(worker):
     script = Script(
         steps=[
             ToolStep(id="callback", name="ask_client", args={"question": "Ready?"}),
-            ModelStep(reply=["target" * 250]),
+            ModelStep(reply=["Target turn reply."]),
         ]
     )
     target = await agent.submit_message("run_enqueue", script.model_dump(mode="json"))
@@ -102,28 +80,27 @@ async def test_capture_returns_native_events_through_the_requested_turn(worker):
     assert {event.turn_id for event in events} == {"", earlier.turn_id, turn.turn_id}
     assert isinstance(events[-1].event, TurnEnded)
     assert events[-1].turn_id == turn.turn_id
-    assert AgentEvents(events).for_turn(turn.turn_id).reply_text == "target" * 250
+    assert AgentEvents(events).for_turn(turn.turn_id).reply_text == "Target turn reply."
 
 
-async def test_capture_pins_the_run_even_after_the_workflow_id_is_reused(worker):
+async def test_capture_reads_retained_events_after_the_workflow_closes(worker):
     client = worker
     handle = await client.start_workflow(
         ScriptedAgent.run, AgentConfig(), id="agent", task_queue="trajectory-tests"
     )
     assert handle.result_run_id is not None
-    accepted = await AgentClient(client, handle.id).submit_message("run_enqueue", {"steps": []})
+    agent = AgentClient(client, handle.id)
+    accepted = await agent.submit_message("run_enqueue", {"steps": []})
     turn = AgentTurn(workflow_id=handle.id, run_id=handle.result_run_id, turn_id=accepted.turn_id)
-    await client.execute_workflow(
-        CaptureTrajectory.run, turn, id="first-capture", task_queue="trajectory-tests"
-    )
+    async with asyncio.timeout(5):
+        while (await agent.get_status()).turn_active:
+            await asyncio.sleep(0.01)
     await handle.terminate()
-    await client.start_workflow(
-        ScriptedAgent.run, AgentConfig(), id=handle.id, task_queue="trajectory-tests"
-    )
 
     events = await client.execute_workflow(
         CaptureTrajectory.run, turn, id="historical-capture", task_queue="trajectory-tests"
     )
+    assert isinstance(events[-1].event, TurnEnded)
     assert events[-1].turn_id == turn.turn_id
 
     with pytest.raises(WorkflowFailureError) as exc:
@@ -138,3 +115,30 @@ async def test_capture_pins_the_run_even_after_the_workflow_id_is_reused(worker)
     assert isinstance(error, ApplicationError)
     assert error.type == "IncompleteTrajectory"
     assert error.non_retryable
+    assert error.message == "The workflow stream ended before the requested turn completed"
+
+
+@pytest.mark.parametrize("worker", [timedelta(milliseconds=250)], indirect=True)
+async def test_capture_deadline_fails_without_retrying_when_live_turn_is_absent(worker):
+    client = worker
+    handle = await client.start_workflow(
+        ScriptedAgent.run, AgentConfig(), id="agent", task_queue="trajectory-tests"
+    )
+    assert handle.result_run_id is not None
+    turn = AgentTurn(workflow_id=handle.id, run_id=handle.result_run_id, turn_id="absent")
+
+    with pytest.raises(WorkflowFailureError) as exc:
+        await client.execute_workflow(
+            CaptureTrajectory.run,
+            turn,
+            id="missing-live-turn",
+            task_queue="trajectory-tests",
+            execution_timeout=timedelta(seconds=10),
+        )
+
+    assert isinstance(exc.value.cause, ActivityError)
+    error = exc.value.cause.cause
+    assert isinstance(error, ApplicationError)
+    assert error.type == "IncompleteTrajectory"
+    assert error.non_retryable
+    assert "'absent' did not complete" in error.message

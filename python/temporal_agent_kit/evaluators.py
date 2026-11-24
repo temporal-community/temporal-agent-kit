@@ -14,11 +14,24 @@ from temporalio.exceptions import ApplicationError
 from temporal_agent_kit.agent_events import AgentEvents
 from temporal_agent_kit.agent_protocol import AgentEvent
 
-__all__ = ["EvaluatorResult", "activity_eval_defn", "eval_defn"]
+__all__ = ["EvaluatorInput", "EvaluatorResult", "activity_eval_defn", "eval_defn"]
+
+
+@dataclass(frozen=True)
+class EvaluatorInput:
+    """The requested turn ID and the retained events captured through that turn."""
+
+    turn_id: str
+    events: AgentEvents
+
+    @property
+    def turn_events(self) -> AgentEvents:
+        """Events for the requested turn only."""
+        return self.events.for_turn(self.turn_id)
 
 
 class EvaluatorResult(BaseModel):
-    """The outcome of one evaluator."""
+    """The outcome of one evaluator. A numeric value can have an inclusive range."""
 
     model_config = ConfigDict(allow_inf_nan=False)
 
@@ -26,17 +39,33 @@ class EvaluatorResult(BaseModel):
     value: float | str | None = None
     value_range: tuple[float, float] | None = None
     reasoning: str | None = None
+    error_kind: Literal["reported", "execution"] | None = None
 
     @model_validator(mode="after")
     def _validate_outcome(self) -> EvaluatorResult:
+        if self.status == "completed" and self.value is None:
+            raise ValueError("completed outcomes require a value")
         if self.status != "completed" and (
             self.value is not None or not (self.reasoning or "").strip()
         ):
             raise ValueError("skipped and error outcomes require reasoning and no score")
+        if self.status != "error" and self.error_kind is not None:
+            raise ValueError("error_kind is only allowed for error outcomes")
+        if self.value_range is None:
+            return self
+        if self.value is None or isinstance(self.value, str):
+            raise ValueError("value_range requires a numeric value")
+        lower, upper = self.value_range
+        if lower > upper:
+            raise ValueError(
+                "value_range lower bound must be less than or equal to its upper bound"
+            )
+        if not lower <= self.value <= upper:
+            raise ValueError("value must be within value_range")
         return self
 
 
-Evaluator = Callable[[AgentEvents], Awaitable[EvaluatorResult]]
+Evaluator = Callable[[EvaluatorInput], Awaitable[EvaluatorResult]]
 _EvaluatorKind = Literal["inline", "activity"]
 
 
@@ -57,18 +86,18 @@ class _EvaluatorDefinition:
     spec: _EvaluatorSpec
     fn: Evaluator
 
-    def bind_activity(self) -> Callable[[list[AgentEvent]], Awaitable[EvaluatorResult]]:
+    def bind_activity(self) -> Callable[[list[AgentEvent], str], Awaitable[EvaluatorResult]]:
         @activity.defn(name=self.spec.activity_type)
-        async def run(events: list[AgentEvent]) -> EvaluatorResult:
-            return await self.evaluate(AgentEvents(events))
+        async def run(events: list[AgentEvent], turn_id: str) -> EvaluatorResult:
+            return await self.evaluate(EvaluatorInput(turn_id=turn_id, events=AgentEvents(events)))
 
         return run
 
-    async def evaluate(self, events: AgentEvents) -> EvaluatorResult:
-        result = await self.fn(events)
+    async def evaluate(self, evaluation: EvaluatorInput) -> EvaluatorResult:
+        result = await self.fn(evaluation)
         try:
             # Validate a fresh snapshot because the author may have mutated a result model.
-            return EvaluatorResult.model_validate(
+            outcome = EvaluatorResult.model_validate(
                 result.model_dump() if isinstance(result, EvaluatorResult) else result
             )
         except ValidationError as exc:
@@ -76,6 +105,9 @@ class _EvaluatorDefinition:
             raise ApplicationError(
                 reason, type="InvalidEvaluatorResult", non_retryable=True
             ) from None
+        if outcome.status == "error":
+            outcome.error_kind = "reported"
+        return outcome
 
 
 @overload
@@ -122,14 +154,14 @@ def _define_evaluator(
             not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
         ):
             raise TypeError(
-                f"{decorator} requires an async function taking one AgentEvents"
+                f"{decorator} requires an async function taking one EvaluatorInput"
             )
         hints = get_type_hints(evaluator)
         if (
-            hints.get(parameters[0].name) is not AgentEvents
+            hints.get(parameters[0].name) is not EvaluatorInput
             or hints.get("return") is not EvaluatorResult
         ):
-            raise TypeError(f"{decorator} requires (AgentEvents) -> EvaluatorResult")
+            raise TypeError(f"{decorator} requires (EvaluatorInput) -> EvaluatorResult")
 
         if kind == "inline" and evaluator.__qualname__ != evaluator.__name__:
             raise TypeError(f"{decorator} requires a module-level function")

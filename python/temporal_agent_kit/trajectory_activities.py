@@ -9,7 +9,6 @@ from datetime import timedelta
 from pydantic import BaseModel, ConfigDict, Field
 from temporalio import activity
 from temporalio.client import Client
-from temporalio.common import RawValue
 from temporalio.contrib.workflow_streams import WorkflowStreamClient
 from temporalio.exceptions import ApplicationError
 
@@ -26,7 +25,7 @@ CAPTURE_TRAJECTORY_ACTIVITY = "agentkit.eval.capture_trajectory"
 
 
 class AgentTurn(BaseModel):
-    """A turn in an exact workflow run in the worker client's namespace."""
+    """The source Workflow and turn requested for evaluation."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -50,35 +49,39 @@ class TrajectoryActivities:
     @activity.defn(name=CAPTURE_TRAJECTORY_ACTIVITY)
     async def capture_trajectory(self, agent_turn: AgentTurn) -> list[AgentEvent]:
         """Read the source agent's retained events through the requested completed turn."""
-        handle = self._client.get_workflow_handle(agent_turn.workflow_id, run_id=agent_turn.run_id)
-        # The handle-only client stays pinned to this run. Decode raw items with the
-        # worker's converter while keeping continue-as-new following disabled.
-        subscription = WorkflowStreamClient(handle).subscribe(
-            TURN_EVENTS_TOPIC, result_type=RawValue
-        )
-        converter = self._client.data_converter.payload_converter
+        stream = WorkflowStreamClient.create(self._client, agent_turn.workflow_id)
+        subscription = stream.subscribe(TURN_EVENTS_TOPIC, result_type=AgentEvent)
         events: list[AgentEvent] = []
         started = False
-        async with (
-            asyncio.timeout(self._stream_timeout.total_seconds()),
-            aclosing(subscription) as items,
-        ):
-            async for item in items:
-                event = converter.from_payload(item.data.payload, AgentEvent)
-                events.append(event)
-                if event.turn_id != agent_turn.turn_id:
-                    continue
-                if isinstance(event.event, TurnStarted):
-                    started = True
-                if isinstance(event.event, TurnEnded):
-                    if not started:
-                        raise ApplicationError(
-                            "The requested turn's start is outside the retained stream",
-                            type="IncompleteTrajectory",
-                            non_retryable=True,
-                        )
-                    # Admission for a queued turn can appear before this turn ends.
-                    return [item for item in events if item.turn_number <= event.turn_number]
+        timeout_seconds = self._stream_timeout.total_seconds()
+        deadline = asyncio.timeout(timeout_seconds)
+        try:
+            async with deadline, aclosing(subscription) as items:
+                async for item in items:
+                    event = item.data
+                    events.append(event)
+                    if event.turn_id != agent_turn.turn_id:
+                        continue
+                    if isinstance(event.event, TurnStarted):
+                        started = True
+                    if isinstance(event.event, TurnEnded):
+                        if not started:
+                            raise ApplicationError(
+                                "The requested turn's start is outside the retained stream",
+                                type="IncompleteTrajectory",
+                                non_retryable=True,
+                            )
+                        # Admission for a queued turn can appear before this turn ends.
+                        return [item for item in events if item.turn_number <= event.turn_number]
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+            raise ApplicationError(
+                f"The requested turn {agent_turn.turn_id!r} did not complete within "
+                f"{timeout_seconds:g} seconds of trajectory capture",
+                type="IncompleteTrajectory",
+                non_retryable=True,
+            ) from None
 
         raise ApplicationError(
             "The workflow stream ended before the requested turn completed",

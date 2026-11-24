@@ -423,7 +423,6 @@ agent_kit_pytest_test(
         "//python/temporal_agent_kit:agent_client",
         "//python/temporal_agent_kit:trajectory_activities",
         "//python/temporal_agent_kit/agent_protocol:__init__",
-        "//python/temporal_agent_kit/utils:large_payload",
         "//python/tests/conformance:script",
         "//python/tests/conformance:scripted_agent",
         "@pypi//pytest",

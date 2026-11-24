@@ -129,6 +129,7 @@ examples = [
     "google-auth>=2.53.0",
     "pydantic-monty==1.0.0",  # Monty sandbox; pinned like the code-mode extra
     "fastapi[standard]>=0.136.3",  # packaged web app used by the examples; pulls in uvicorn
+    "openai>=3.8.0",  # direct Responses API calls in the OpenAI Hello evaluators
     "openai-agents>=0.22.0",  # the OpenAI Agents SDK example (examples/openai_hello, examples/react_agent)
     "pydantic-ai-slim[temporal]>=2.53",  # the Pydantic AI example (examples/pydantic_ai_hello)
     "strands-agents>=1.64.0",  # the Strands Agents example (examples/strands_hello)

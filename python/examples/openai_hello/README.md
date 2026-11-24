@@ -27,8 +27,9 @@ streaming activity, to the live turn stream the web UI consumes.
 
 ## Evals authoring reference
 
-[`evaluators.py`](evaluators.py) defines five evaluators that take `AgentEvents`.
+[`evaluators.py`](evaluators.py) defines five evaluators that take `EvaluatorInput`.
 The worker registers them with `AgentKitPlugin(evaluators=EVALUATORS)`.
+The two judge Activities call the OpenAI Responses API directly for structured results.
 
 | Evaluator | Execution | Result |
 | --- | --- | --- |
@@ -46,8 +47,7 @@ After a turn completes, use a Kit-configured client and the agent worker's task 
 to run its evals:
 
 ```python
-from temporal_agent_kit.eval_workflow import RunEvaluatorsWorkflow
-from temporal_agent_kit.trajectory_activities import AgentTurn
+from temporal_agent_kit import AgentTurn, RunEvaluatorsWorkflow
 
 result = await client.execute_workflow(
     RunEvaluatorsWorkflow.run,
@@ -58,6 +58,9 @@ result = await client.execute_workflow(
 print(result.results["count_failed_tools"])
 print(result.results["request_type"])
 ```
+
+Use a distinct Workflow ID for each session you plan to evaluate. See the
+[evaluator guide](../../../docs/guides/agent-events.md) for how capture selects a stream.
 
 ## Layout
 

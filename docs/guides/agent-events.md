@@ -6,29 +6,50 @@ a root stream or a merged stream that includes subagents.
 
 ## Run evals for a turn
 
-Declare an async function with the signature `(AgentEvents) -> EvaluatorResult` and
-register it on `AgentKitPlugin(evaluators=[...])`. A list applies to every source agent
+Import `EvaluatorInput` and `EvaluatorResult` from `temporal_agent_kit`. Declare an async
+evaluator with the signature `(EvaluatorInput) -> EvaluatorResult` and register it on
+`AgentKitPlugin(evaluators=[...])`. A list applies to every source agent
 evaluated by that worker. Use a mapping keyed by source Workflow type to register
-different evaluators on a shared worker.
+different evaluators on a shared worker. A source Workflow type missing from the
+mapping fails planning. Use an empty list for a specific type to skip its evals.
 
-- `@agent.eval_defn` runs the evaluator inline inside `RunEvaluatorsWorkflow`.
-- `@agent.activity_eval_defn` runs the evaluator in its own Activity.
+- `@agent.eval_defn` runs the evaluator inline as Workflow code inside `RunEvaluatorsWorkflow`.
+  It follows Workflow rules: it must be deterministic, and it does any I/O, such as model
+  calls, through Activities it starts. Use it for checks computed from the events alone, or
+  for multi-step evals where each step should be retried and recorded separately.
+- `@agent.activity_eval_defn` runs the whole evaluator in one Activity, retried as a unit.
+  Use it to call a model or service directly.
 
-Start `RunEvaluatorsWorkflow.run` with an `AgentTurn` containing the source
-`workflow_id`, `run_id`, and `turn_id`. The Kit selects the source agent's evaluators,
+Import `RunEvaluatorsWorkflow` and `AgentTurn` from `temporal_agent_kit`. Start
+`RunEvaluatorsWorkflow.run` with an `AgentTurn` containing the source `workflow_id`,
+`run_id`, and `turn_id`. The Kit selects the source agent's evaluators,
 captures the retained events through that turn once, and uses that capture for both
 kinds of evaluator. When External Storage is configured, the Temporal SDK applies
 the configured size threshold and driver selection to the trajectory, plan, and
 scores. Payloads below the threshold stay inline in Workflow history. For offloaded
 payloads, history contains a native claim check and the SDK retrieves the data.
-The Kit passes `AgentEvents` to the author function.
-
-The capture ends at the requested turn's `TurnEnded` marker. Use
-`events.for_turn(events.all[-1].turn_id)` to score that turn and `events.all` to inspect
-earlier retained context. The capture reads the source agent's stream. Each subagent
-has its own stream. An evaluator can return `skipped` or `error` with a reason.
-An evaluator failure becomes an `error` result while other evaluator results are kept.
+The capture ends at the requested turn's `TurnEnded` marker. The evaluator input carries the
+requested `turn_id`. Use `evaluation.turn_events` to score that turn and `evaluation.events`
+to inspect the full capture, including earlier retained context. Both are `AgentEvents` views.
+The capture reads the source agent's stream. Each subagent has its own stream.
 See the [OpenAI Hello evaluators](../../python/examples/openai_hello/evaluators.py).
+
+Capture subscribes by Workflow ID and starts with the latest run. The supplied `run_id`
+identifies the source execution for evaluator routing. Use a distinct Workflow ID for each
+independent session you plan to evaluate. Reusing an ID can make an earlier session's turn
+unavailable or cause capture to read a matching turn from the newer session.
+
+If your agent uses Continue-As-New, pass its `WorkflowStreamState` into the successor run
+so the stream can still serve retained events from earlier runs.
+
+An evaluator can return `skipped` or `error` with a reason. The Kit sets
+`error_kind="reported"` when an evaluator returns an error. If an evaluator raises,
+returns an invalid result, or cannot load, the Kit records `error_kind="execution"`
+and includes the exception type in the reason. Activity failures follow the Activity's
+retry policy before becoming results. The runner still returns the other evaluators' results.
+
+An execution error is final for that eval run. After deploying a fix, start a new
+`RunEvaluatorsWorkflow` for the same `AgentTurn` while the source stream still retains it.
 
 ## Inspect a retrieved trajectory
 

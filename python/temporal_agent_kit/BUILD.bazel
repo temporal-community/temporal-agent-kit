@@ -10,6 +10,9 @@ py_library(
         ":agent",
         ":agent_events",
         ":agent_workflow",
+        ":eval_workflow",
+        ":evaluators",
+        ":trajectory_activities",
     ],
 )
 

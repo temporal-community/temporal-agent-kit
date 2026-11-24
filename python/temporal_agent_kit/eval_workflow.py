@@ -19,6 +19,7 @@ from temporalio.exceptions import (
 from temporal_agent_kit.agent_events import AgentEvents
 from temporal_agent_kit.agent_protocol import AgentEvent
 from temporal_agent_kit.evaluators import (
+    EvaluatorInput,
     EvaluatorResult,
     _EvaluatorSpec,
     _load_inline_evaluator,
@@ -59,6 +60,14 @@ class _EvalRegistry:
     async def plan(self, source: AgentTurn) -> _EvalPlan:
         handle = self._client.get_workflow_handle(source.workflow_id, run_id=source.run_id)
         agent = (await handle.describe()).workflow_type
+        if self._by_agent and agent not in self._by_agent:
+            registered = ", ".join(repr(name) for name in sorted(self._by_agent))
+            raise ApplicationError(
+                f"No evaluators registered for source Workflow type {agent!r}. "
+                f"Registered Workflow types are {registered}.",
+                type="EvaluatorsNotConfigured",
+                non_retryable=True,
+            )
         return _EvalPlan(agent=agent, evaluators=self._by_agent.get(agent, self._default))
 
 
@@ -80,12 +89,11 @@ class RunEvaluatorsWorkflow:
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=_RETRY,
             )
-            trajectory = AgentEvents(events)
             outcomes = await asyncio.gather(
                 *(
-                    _run_inline_evaluator(spec, trajectory)
+                    _run_inline_evaluator(spec, events, source.turn_id)
                     if spec.kind == "inline"
-                    else _run_activity_evaluator(spec, events)
+                    else _run_activity_evaluator(spec, events, source.turn_id)
                     for spec in plan.evaluators
                 )
             )
@@ -95,27 +103,27 @@ class RunEvaluatorsWorkflow:
         return RunEvaluatorsResult(agent=plan.agent, source=source, results=results)
 
 
-async def _run_inline_evaluator(spec: _EvaluatorSpec, events: AgentEvents) -> EvaluatorResult:
+async def _run_inline_evaluator(
+    spec: _EvaluatorSpec, events: list[AgentEvent], turn_id: str
+) -> EvaluatorResult:
     try:
         definition = _load_inline_evaluator(spec)
-        return await definition.evaluate(events)
+        # Nested payloads are mutable even when their event models are frozen.
+        snapshot = AgentEvents(event.model_copy(deep=True) for event in events)
+        return await definition.evaluate(EvaluatorInput(turn_id=turn_id, events=snapshot))
     except Exception as exc:
         if is_cancelled_exception(exc):
             raise
-        reason = exc.message if isinstance(exc, ApplicationError) else str(exc)
-        return EvaluatorResult(
-            status="error",
-            reasoning=reason.strip() or "Inline evaluator failed",
-        )
+        return _execution_error(exc)
 
 
 async def _run_activity_evaluator(
-    spec: _EvaluatorSpec, events: list[AgentEvent]
+    spec: _EvaluatorSpec, events: list[AgentEvent], turn_id: str
 ) -> EvaluatorResult:
     try:
         return await workflow.execute_activity(
             spec.activity_type,
-            events,
+            args=[events, turn_id],
             result_type=EvaluatorResult,
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_RETRY,
@@ -123,7 +131,18 @@ async def _run_activity_evaluator(
     except ActivityError as exc:
         if is_cancelled_exception(exc):
             raise
-        return EvaluatorResult(
-            status="error",
-            reasoning=str(exc.cause or exc).strip() or "Evaluator Activity failed",
-        )
+        return _execution_error(exc.cause or exc)
+
+
+def _execution_error(exc: BaseException) -> EvaluatorResult:
+    error_type = type(exc).__name__
+    if isinstance(exc, ApplicationError):
+        error_type = exc.type or error_type
+        message = exc.message.strip()
+    else:
+        message = str(exc).strip()
+    return EvaluatorResult(
+        status="error",
+        error_kind="execution",
+        reasoning=f"{error_type}: {message}" if message else error_type,
+    )

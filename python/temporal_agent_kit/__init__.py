@@ -1,7 +1,11 @@
 """Temporal Agent Kit (experimental): durable agents on Temporal, with the AI SDKs you already use.
 
 Agent authors import the core API from here: ``agent`` (the ``@agent.defn`` / ``@agent.accepts``
-/ tool decorators) and the workflow-side runtime (``AgentWorkflowRunner``). Further modules:
+/ tool decorators) and the workflow-side runtime (``AgentWorkflowRunner``). Evaluators
+take ``EvaluatorInput`` and return ``EvaluatorResult``. To run them, pass an ``AgentTurn`` to
+``RunEvaluatorsWorkflow`` and read the outcomes from ``RunEvaluatorsResult``.
+
+Further modules:
 
   * :mod:`temporal_agent_kit.state`, :mod:`temporal_agent_kit.agent_protocol`,
     :mod:`temporal_agent_kit.code_mode` — observable state, the event protocol and Code Mode.
@@ -18,10 +22,18 @@ from temporal_agent_kit.agent_workflow import (
     AgentToolContext,
     AgentWorkflowRunner,
 )
+from temporal_agent_kit.eval_workflow import RunEvaluatorsResult, RunEvaluatorsWorkflow
+from temporal_agent_kit.evaluators import EvaluatorInput, EvaluatorResult
+from temporal_agent_kit.trajectory_activities import AgentTurn
 
 __all__ = [
     "AgentEvents",
     "AgentToolContext",
+    "AgentTurn",
     "AgentWorkflowRunner",
+    "EvaluatorInput",
+    "EvaluatorResult",
+    "RunEvaluatorsResult",
+    "RunEvaluatorsWorkflow",
     "agent",
 ]

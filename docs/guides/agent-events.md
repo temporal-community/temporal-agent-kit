@@ -40,10 +40,10 @@ from temporal_agent_kit.agent_protocol import AgentEvent, ReplyDelta, ToolErrorE
 
 
 def inspect_reply(
-    trajectory: Iterable[AgentEvent], turn_id: str, message_id: str
+    trajectory: Iterable[AgentEvent], agent_id: str, turn_id: str, message_id: str
 ) -> None:
     events = AgentEvents(trajectory)
-    turn = events.root_only().for_turn(turn_id)
+    turn = events.for_agent(agent_id).for_turn(turn_id)
     message = turn.for_message(message_id)
 
     print(message.reply_text)
@@ -61,10 +61,7 @@ def inspect_reply(
   `of_type(...)` returns an `AgentEvents` view and chains with other filters. Use
   `.all` on the view to read the matching envelopes in stream order and `.event`
   on an envelope to read its payload. Treat the shared envelopes and payloads as read-only.
-- `root_only()` selects the root of the agent tree even if a subagent appears first.
-  `for_agent(id)` selects an exact agent ID. `subagents()` returns a view per observed
-  descendant. `subagents(agent_key=...)` uses the parent markers present in the view to
-  match keys, so a partial trajectory may have child events with unknown keys.
+- `for_agent(id)` selects events emitted by an exact agent ID.
 - `for_turn(id)` and `for_message(id)` match envelope IDs exactly. A child dispatched during
   a root turn has its own turn ID. To inspect all agents in a merged trajectory, use the
   original view. A single turn can contain several inbound messages.
@@ -77,12 +74,11 @@ def inspect_reply(
 
 - Use `of_type(ToolErrorEvent)` for tool failures or `of_type(ToolEndEvent)` for
   completed tool calls and their outputs.
-- `model_call_count` counts observed starts. `total_usage` sums each field reported by
+- `model_call_count` counts observed model starts. `total_usage` sums each field reported by
   every observed completion, across all agents in the current view. A missing count is
   `None`, and a reported zero stays zero. With no completions, a completion missing usage
   altogether, or a start that has yet to end in the view, all totals are unknown.
   `total_tokens` uses the provider's own totals.
-- `thought_summaries` lists streamed thought-summary chunks. `steering_messages` lists
-  enqueued steering text, including messages later dropped. `errors` reports handler,
-  tool, and automatic approval evaluation errors. `close_reason` returns the reason for
-  the sole observed close, or `None` if there is none. Select one agent when several closed.
+- `errors` lists handler, tool, and automatic approval evaluation error messages in stream
+  order. `close_reason` returns the sole observed close reason, or `None` if there is none.
+  Select one agent when several closed.

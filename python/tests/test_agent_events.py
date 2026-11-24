@@ -13,10 +13,7 @@ from temporal_agent_kit.agent_protocol import (
     ModelInteractionEnded,
     ModelInteractionStarted,
     ReplyDelta,
-    SteeringDropped,
-    SteeringEnqueued,
     SubagentMessageSent,
-    ThoughtSummaryDelta,
     TokenUsage,
     ToolErrorEvent,
     TurnStarted,
@@ -71,14 +68,9 @@ def test_views_keep_native_order_and_scope_to_envelope_ids() -> None:
     assert matching.for_agent(CHILD).all == [child_delta]
     assert events.for_turn("turn-2").of_type(TurnStarted).all[0] is root_start
     assert events.of_type(AgentClosed).all == []
-    assert events.root_only().all == [root_marker, root_start, root_delta]
+    assert events.for_agent(ROOT).all == [root_marker, root_start, root_delta]
     assert events.for_turn("turn-1").all == [root_marker]
     assert events.for_agent(CHILD).all == [child_delta]
-    assert [view.all for view in events.subagents()] == [[child_delta], [grandchild_delta]]
-    assert [view.all for view in events.subagents("researcher")] == [[child_delta]]
-    assert AgentEvents([child_delta]).root_only().all == []
-    assert [view.all for view in AgentEvents([child_delta]).subagents()] == [[child_delta]]
-    assert AgentEvents([child_delta]).subagents("researcher") == []
     events.all.clear()
     assert events.all[0] is root_marker
 
@@ -93,8 +85,8 @@ def test_final_reply_requires_disambiguation_even_within_one_turn() -> None:
 
     assert events.replies == [child, joined, final, later]
     with pytest.raises(ValueError, match="multiple completed replies"):
-        _ = events.root_only().for_turn("turn-1").reply_text
-    assert events.root_only().for_turn("turn-1").for_message("message-1").reply_text == "final"
+        _ = events.for_agent(ROOT).for_turn("turn-1").reply_text
+    assert events.for_agent(ROOT).for_turn("turn-1").for_message("message-1").reply_text == "final"
     assert events.for_agent(CHILD).reply_text == "child"
     assert events.for_turn("turn-2").reply_text == "later"
 
@@ -133,7 +125,7 @@ def test_usage_aggregates_reported_fields_and_keeps_real_zero() -> None:
 
     assert events.model_call_count == 2
     assert events.total_usage == TokenUsage(input_tokens=12, output_tokens=0)
-    assert events.root_only().total_usage == TokenUsage(
+    assert events.for_agent(ROOT).total_usage == TokenUsage(
         input_tokens=5, output_tokens=0, total_tokens=8
     )
 
@@ -153,9 +145,6 @@ def test_usage_is_unknown_for_unreported_or_unfinished_calls() -> None:
 def test_diagnostics_keep_trajectory_order_and_close_reason_is_agent_specific() -> None:
     events = AgentEvents(
         [
-            observed(ThoughtSummaryDelta(delta={"text": "checking"})),
-            observed(SteeringEnqueued(steering_id="queued", text="please continue")),
-            observed(SteeringDropped(steering_ids=["queued"])),
             observed(
                 AutoApprovalEvaluationError(
                     tool_id="evaluation-tool",
@@ -177,11 +166,9 @@ def test_diagnostics_keep_trajectory_order_and_close_reason_is_agent_specific() 
         ]
     )
 
-    assert events.thought_summaries == [{"text": "checking"}]
-    assert events.steering_messages == ["please continue"]
     assert events.errors == ["approval eval failed", "tool failed", "handler failed"]
     with pytest.raises(ValueError, match="multiple agent closes"):
         _ = events.close_reason
-    assert events.root_only().close_reason is CloseReason.REQUESTED
+    assert events.for_agent(ROOT).close_reason is CloseReason.REQUESTED
     assert events.for_agent(CHILD).close_reason is CloseReason.IDLE_TIMEOUT_EXPIRED
     assert events.for_turn("turn-1").close_reason is None

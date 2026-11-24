@@ -14,13 +14,7 @@ from temporal_agent_kit.agent_protocol.events import (
     MessageHandlerError,
     ModelInteractionEnded,
     ModelInteractionStarted,
-    SteeringEnqueued,
     StreamEvent,
-    SubagentMessageSent,
-    SubagentReplyReceived,
-    SubagentStarted,
-    SubagentStopped,
-    ThoughtSummaryDelta,
     TokenUsage,
     ToolErrorEvent,
 )
@@ -55,10 +49,6 @@ class AgentEvents:
     def _payloads_of_type(self, event_type: type[_Event]) -> list[_Event]:
         return [item.event for item in self._events if isinstance(item.event, event_type)]
 
-    def root_only(self) -> AgentEvents:
-        """Keep events emitted by the root, identified by its single-segment agent ID."""
-        return self._view(item for item in self._events if "-" not in item.agent_id)
-
     def for_agent(self, agent_id: str) -> AgentEvents:
         """Keep events emitted by this exact agent ID."""
         return self._view(item for item in self._events if item.agent_id == agent_id)
@@ -70,27 +60,6 @@ class AgentEvents:
     def for_message(self, message_id: str) -> AgentEvents:
         """Keep events attributed to this exact message ID."""
         return self._view(item for item in self._events if item.message_id == message_id)
-
-    def subagents(self, agent_key: str | None = None) -> list[AgentEvents]:
-        """One view per observed descendant, ordered by its first event.
-
-        Filtering by key requires a parent event in this view naming the descendant's key.
-        """
-        keys: dict[str, str] = {}
-        if agent_key is not None:
-            for item in self._events:
-                event = item.event
-                if isinstance(
-                    event,
-                    (SubagentStarted, SubagentStopped, SubagentMessageSent, SubagentReplyReceived),
-                ):
-                    keys[event.subagent_id] = event.agent_key
-
-        groups: dict[str, list[AgentEvent]] = {}
-        for item in self._events:
-            if "-" in item.agent_id and (agent_key is None or keys.get(item.agent_id) == agent_key):
-                groups.setdefault(item.agent_id, []).append(item)
-        return [self._view(items) for items in groups.values()]
 
     @property
     def replies(self) -> list[AgentEvent]:
@@ -111,11 +80,6 @@ class AgentEvents:
             return None
         value = replies[0].output.get("text")
         return value if isinstance(value, str) else None
-
-    @property
-    def thought_summaries(self) -> list[dict[str, Any]]:
-        """Observed model thought-summary chunks, in order."""
-        return [event.delta for event in self._payloads_of_type(ThoughtSummaryDelta)]
 
     @property
     def model_call_count(self) -> int:
@@ -150,11 +114,6 @@ class AgentEvents:
                 if all(count is not None for count in counts):
                     totals[field] = sum(counts)
         return TokenUsage(**totals)
-
-    @property
-    def steering_messages(self) -> list[str]:
-        """Enqueued steering text, including messages later dropped or still pending."""
-        return [event.text for event in self._payloads_of_type(SteeringEnqueued)]
 
     @property
     def errors(self) -> list[str]:

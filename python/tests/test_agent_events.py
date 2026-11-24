@@ -9,8 +9,6 @@ from temporal_agent_kit.agent_protocol import (
     AgentStateSnapshot,
     AgentStreamItem,
     AutoApprovalEvaluationError,
-    CallbackRequested,
-    CallbackResolved,
     CloseReason,
     MessageHandlerEnd,
     MessageHandlerError,
@@ -22,12 +20,7 @@ from temporal_agent_kit.agent_protocol import (
     SubagentMessageSent,
     ThoughtSummaryDelta,
     TokenUsage,
-    ToolApprovalRequested,
-    ToolApprovalResolved,
-    ToolEndEvent,
     ToolErrorEvent,
-    ToolRequested,
-    ToolStartEvent,
     TurnStarted,
 )
 
@@ -120,60 +113,6 @@ def test_reply_text_comes_only_from_completed_output(
         supplied.append(observed(MessageHandlerEnd(output=output)))
 
     assert AgentEvents(supplied).reply_text == text
-
-
-def test_tool_lifecycles_keep_reused_provider_ids_separate() -> None:
-    reuse = {"tool_id": "provider-call", "tool_name": "search"}
-    requested = observed(ToolRequested(**reuse, tool_input={"query": "abc"}))
-    gated = observed(ToolApprovalRequested(**reuse))
-    approved = observed(ToolApprovalResolved(**reuse, approved=True))
-    started = observed(ToolStartEvent(**reuse))
-    ended = observed(ToolEndEvent(**reuse, tool_output=None))
-    child_error = observed(
-        ToolErrorEvent(**reuse, message="child failed"), agent=CHILD, turn="child-turn"
-    )
-    rejected = observed(
-        ToolApprovalResolved(**reuse, approved=False, reason="policy"), message="joined"
-    )
-    later_request = observed(ToolRequested(**reuse), turn="turn-2", message="later")
-    events = AgentEvents(
-        [requested, child_error, gated, rejected, approved, started, ended, later_request]
-    )
-
-    call, child, denied, later = events.tool_calls_named("search")
-    assert call.events == (requested, gated, approved, started, ended)
-    assert call.requested == requested.event
-    assert call.approval_requested == gated.event
-    assert call.approval_resolved == approved.event
-    assert call.started == started.event
-    assert call.ended == ended.event
-    assert child.agent_id == CHILD
-    assert child.error == child_error.event
-    assert events.rejected_tool_calls == [denied]
-    assert denied.message_id == "joined"
-    assert denied.started is None
-    assert later.turn_id == "turn-2"
-    assert later.ended is None
-    assert events.tool_calls_named("other") == []
-
-
-def test_callbacks_keep_partial_resolutions_and_enclosing_tool_outcome() -> None:
-    callback = {"tool_id": "callback-1", "tool_name": "ask_user"}
-    request = observed(CallbackRequested(**callback, tool_input={"question": "Continue?"}))
-    resolve = observed(CallbackResolved(**callback, outcome="ok"))
-    end = observed(ToolEndEvent(**callback, tool_output={"answer": "yes"}))
-    timeout = observed(
-        CallbackResolved(tool_id="callback-2", tool_name="ask_user", outcome="timeout")
-    )
-    other = observed(ToolRequested(tool_id="another-tool", tool_name="search"))
-    events = AgentEvents([request, other, resolve, end, timeout])
-
-    completed, partial = events.callbacks
-    assert completed.callback_requested == request.event
-    assert completed.callback_resolved == resolve.event
-    assert completed.ended == end.event
-    assert partial.callback_requested is None
-    assert partial.callback_resolved == timeout.event
 
 
 def test_usage_aggregates_reported_fields_and_keeps_real_zero() -> None:

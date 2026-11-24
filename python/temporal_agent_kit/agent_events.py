@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Any, TypeVar
 
 import jsonpatch
@@ -16,8 +15,6 @@ from temporal_agent_kit.agent_protocol.events import (
     AgentStatePatch,
     AgentStateSnapshot,
     AutoApprovalEvaluationError,
-    CallbackRequested,
-    CallbackResolved,
     MessageHandlerEnd,
     MessageHandlerError,
     ModelInteractionEnded,
@@ -30,68 +27,12 @@ from temporal_agent_kit.agent_protocol.events import (
     SubagentStopped,
     ThoughtSummaryDelta,
     TokenUsage,
-    ToolApprovalRequested,
-    ToolApprovalResolved,
-    ToolEndEvent,
     ToolErrorEvent,
-    ToolEvent,
-    ToolRequested,
-    ToolStartEvent,
 )
 
-__all__ = ["AgentEvents", "ToolCall"]
+__all__ = ["AgentEvents"]
 
 _Event = TypeVar("_Event", bound=StreamEvent[Any])
-
-
-@dataclass(frozen=True, slots=True)
-class ToolCall:
-    """The observed lifecycle of one tool invocation, in trajectory order."""
-
-    agent_id: str
-    turn_id: str
-    message_id: str | None
-    tool_id: str
-    tool_name: str
-    events: tuple[AgentEvent, ...]
-
-    def _last(self, event_type: type[_Event]) -> _Event | None:
-        return next(
-            (item.event for item in reversed(self.events) if isinstance(item.event, event_type)),
-            None,
-        )
-
-    @property
-    def requested(self) -> ToolRequested | None:
-        return self._last(ToolRequested)
-
-    @property
-    def approval_requested(self) -> ToolApprovalRequested | None:
-        return self._last(ToolApprovalRequested)
-
-    @property
-    def approval_resolved(self) -> ToolApprovalResolved | None:
-        return self._last(ToolApprovalResolved)
-
-    @property
-    def started(self) -> ToolStartEvent | None:
-        return self._last(ToolStartEvent)
-
-    @property
-    def ended(self) -> ToolEndEvent | None:
-        return self._last(ToolEndEvent)
-
-    @property
-    def error(self) -> ToolErrorEvent | None:
-        return self._last(ToolErrorEvent)
-
-    @property
-    def callback_requested(self) -> CallbackRequested | None:
-        return self._last(CallbackRequested)
-
-    @property
-    def callback_resolved(self) -> CallbackResolved | None:
-        return self._last(CallbackResolved)
 
 
 class AgentEvents:
@@ -180,39 +121,6 @@ class AgentEvents:
     def thought_summaries(self) -> list[dict[str, Any]]:
         """Observed model thought-summary chunks, in order."""
         return [event.delta for event in self._payloads_of_type(ThoughtSummaryDelta)]
-
-    @property
-    def tool_calls(self) -> list[ToolCall]:
-        """Tool calls, including partial calls, ordered by their first observed event."""
-        groups: dict[tuple[str, str, str | None, str], tuple[str, list[AgentEvent]]] = {}
-        for item in self._events:
-            event = item.event
-            if isinstance(event, ToolEvent):
-                key = item.agent_id, item.turn_id, item.message_id, event.tool_id
-                _, items = groups.setdefault(key, (event.tool_name, []))
-                items.append(item)
-        return [ToolCall(*key, name, tuple(items)) for key, (name, items) in groups.items()]
-
-    def tool_calls_named(self, name: str) -> list[ToolCall]:
-        return [call for call in self.tool_calls if call.tool_name == name]
-
-    @property
-    def rejected_tool_calls(self) -> list[ToolCall]:
-        """Calls with an observed denial at the approval gate."""
-        return [
-            call
-            for call in self.tool_calls
-            if (decision := call.approval_resolved) is not None and not decision.approved
-        ]
-
-    @property
-    def callbacks(self) -> list[ToolCall]:
-        """Calls with an observed callback request or resolution."""
-        return [
-            call
-            for call in self.tool_calls
-            if call.callback_requested is not None or call.callback_resolved is not None
-        ]
 
     @property
     def model_call_count(self) -> int:

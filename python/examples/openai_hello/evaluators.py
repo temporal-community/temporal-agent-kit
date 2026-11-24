@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from temporal_agent_kit import AgentEvents, agent
-from temporal_agent_kit.agent_protocol import MessageHandlerEnd
+from temporal_agent_kit.agent_protocol import MessageHandlerEnd, ToolErrorEvent
 from temporal_agent_kit.evaluators import EvaluatorResult
 
 
@@ -26,9 +26,9 @@ async def has_reply(events: AgentEvents) -> EvaluatorResult:
 
 @agent.activity_eval_defn
 async def count_failed_tools(events: AgentEvents) -> EvaluatorResult:
-    """Count failed tool calls in the final captured turn."""
+    """Count tool errors in the final captured turn."""
     turn = events.for_turn(events.all[-1].turn_id)
     return EvaluatorResult(
         status="completed",
-        value=sum(call.error is not None for call in turn.tool_calls),
+        value=len(turn.of_type(ToolErrorEvent).all),
     )

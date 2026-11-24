@@ -20,7 +20,11 @@ with workflow.unsafe.imports_passed_through():
     from examples.openai_hello.evaluators import count_failed_tools, has_reply
     from temporal_agent_kit import AgentEvents, agent
     from temporal_agent_kit.agent_client import AgentClient
-    from temporal_agent_kit.agent_protocol import AgentConfig, AgentEvent
+    from temporal_agent_kit.agent_protocol import (
+        AgentConfig,
+        AgentEvent,
+        ToolErrorEvent,
+    )
     from temporal_agent_kit.ai_sdks.openai_agents import OpenAIAgentsPlugin
     from temporal_agent_kit.eval_workflow import RunEvaluatorsWorkflow
     from temporal_agent_kit.evaluators import EvaluatorResult
@@ -52,8 +56,8 @@ async def prior_failed_tools(events: AgentEvents) -> EvaluatorResult:
     turn = events.for_turn(events.all[-1].turn_id)
     if len(events.replies) == len(turn.replies):
         return EvaluatorResult(status="skipped", reasoning="No earlier replies.")
-    all_failures = sum(call.error is not None for call in events.tool_calls)
-    target_failures = sum(call.error is not None for call in turn.tool_calls)
+    all_failures = len(events.of_type(ToolErrorEvent).all)
+    target_failures = len(turn.of_type(ToolErrorEvent).all)
     return EvaluatorResult(status="completed", value=all_failures - target_failures)
 
 

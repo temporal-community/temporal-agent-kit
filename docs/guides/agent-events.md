@@ -36,7 +36,7 @@ See the [OpenAI Hello evaluators](../../python/examples/openai_hello/evaluators.
 from collections.abc import Iterable
 
 from temporal_agent_kit import AgentEvents
-from temporal_agent_kit.agent_protocol import AgentEvent, ReplyDelta
+from temporal_agent_kit.agent_protocol import AgentEvent, ReplyDelta, ToolErrorEvent
 
 
 def inspect_reply(
@@ -52,9 +52,7 @@ def inspect_reply(
             print(item.event.text)
     print(turn.total_usage.input_tokens)
 
-    for call in message.tool_calls_named("search"):
-        if call.ended is not None:
-            print(call.ended.tool_output)
+    print(len(message.of_type(ToolErrorEvent).all))
 ```
 
 ## Choose the events to inspect
@@ -77,11 +75,8 @@ def inspect_reply(
 
 ## Inspect tools, usage, and state
 
-- `tool_calls` groups events by agent, turn, message, and tool ID. Each `ToolCall` exposes
-  its native lifecycle events and the observed request, approval, start, end, and error.
-  Missing stages are `None`. An observed end can carry a JSON `null` result.
-  `rejected_tool_calls` shows explicit approval denials. `callbacks` returns the tool calls
-  with a callback request or resolution, including their callback payloads.
+- Use `of_type(ToolErrorEvent)` for tool failures or `of_type(ToolEndEvent)` for
+  completed tool calls and their outputs.
 - `model_call_count` counts observed starts. `total_usage` sums each field reported by
   every observed completion, across all agents in the current view. A missing count is
   `None`, and a reported zero stays zero. With no completions, a completion missing usage

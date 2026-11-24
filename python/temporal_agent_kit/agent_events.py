@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from copy import deepcopy
 from typing import Any, TypeVar
-
-import jsonpatch
 
 from temporal_agent_kit.agent_protocol.agent_interface import CloseReason
 from temporal_agent_kit.agent_protocol.events import (
     AgentClosed,
     AgentEvent,
-    AgentStatePatch,
-    AgentStateSnapshot,
     AutoApprovalEvaluationError,
     MessageHandlerEnd,
     MessageHandlerError,
@@ -160,41 +155,6 @@ class AgentEvents:
     def steering_messages(self) -> list[str]:
         """Enqueued steering text, including messages later dropped or still pending."""
         return [event.text for event in self._payloads_of_type(SteeringEnqueued)]
-
-    def final_state(self, state_id: str) -> dict[str, Any] | None:
-        """Reconstruct the state from its latest snapshot and consecutive patches.
-
-        Returns ``None`` for an absent snapshot or a version gap. Raises ``ValueError``
-        if the state ID appears on multiple agents in the view.
-        """
-        agent_id: str | None = None
-        snapshot: AgentStateSnapshot | None = None
-        patches: list[AgentStatePatch] = []
-        for item in self._events:
-            event = item.event
-            if (
-                not isinstance(event, (AgentStateSnapshot, AgentStatePatch))
-                or event.state_id != state_id
-            ):
-                continue
-            if agent_id is not None and agent_id != item.agent_id:
-                raise ValueError(f"state {state_id!r} appears on multiple agents; select an agent")
-            agent_id = item.agent_id
-            if isinstance(event, AgentStateSnapshot):
-                snapshot = event
-                patches.clear()
-            else:
-                patches.append(event)
-
-        if snapshot is None:
-            return None
-        ops: list[dict[str, Any]] = []
-        for version, patch in enumerate(patches, start=snapshot.version + 1):
-            if patch.version != version:
-                return None
-            ops.extend(patch.ops)
-        # Patch ops can insert mutable values that later ops modify in place.
-        return jsonpatch.apply_patch(snapshot.value, deepcopy(ops))
 
     @property
     def errors(self) -> list[str]:

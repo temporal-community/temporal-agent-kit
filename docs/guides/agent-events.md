@@ -73,7 +73,7 @@ def inspect_reply(
   It returns `None` if no such field or completion is present and raises `ValueError` if
   several replies completed. Use `ReplyDelta` payloads to inspect streamed text separately.
 
-## Inspect tools, usage, and state
+## Inspect tools, usage, and diagnostics
 
 - Use `of_type(ToolErrorEvent)` for tool failures or `of_type(ToolEndEvent)` for
   completed tool calls and their outputs.
@@ -82,10 +82,6 @@ def inspect_reply(
   `None`, and a reported zero stays zero. With no completions, a completion missing usage
   altogether, or a start that has yet to end in the view, all totals are unknown.
   `total_tokens` uses the provider's own totals.
-- `final_state(state_id)` uses the latest available snapshot and replays consecutive
-  patches. Use an agent view with enough history to include the snapshot. The result is
-  `None` when the snapshot is absent or a version is missing. If multiple agents report
-  the same state ID, select one agent first.
 - `thought_summaries` lists streamed thought-summary chunks. `steering_messages` lists
   enqueued steering text, including messages later dropped. `errors` reports handler,
   tool, and automatic approval evaluation errors. `close_reason` returns the reason for

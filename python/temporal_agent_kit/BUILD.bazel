@@ -203,7 +203,6 @@ py_library(
     deps = [
         "//python/temporal_agent_kit/agent_protocol:agent_interface",
         "//python/temporal_agent_kit/agent_protocol:events",
-        "@pypi//jsonpatch",
     ],
 )
 

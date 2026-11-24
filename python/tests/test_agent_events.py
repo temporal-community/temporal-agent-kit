@@ -5,8 +5,6 @@ from temporal_agent_kit import AgentEvents
 from temporal_agent_kit.agent_protocol import (
     AgentClosed,
     AgentEvent,
-    AgentStatePatch,
-    AgentStateSnapshot,
     AgentStreamItem,
     AutoApprovalEvaluationError,
     CloseReason,
@@ -150,51 +148,6 @@ def test_usage_is_unknown_for_unreported_or_unfinished_calls() -> None:
     assert AgentEvents([start, completed, unreported]).total_usage == TokenUsage()
     assert AgentEvents([other_start, start, completed]).total_usage == TokenUsage()
     assert AgentEvents([completed]).total_usage == TokenUsage(input_tokens=7)
-
-
-def test_state_replays_contiguous_patches_without_mutating_source_values() -> None:
-    snapshot = observed(
-        AgentStateSnapshot(state_id="progress", version=0, value={"items": []}),
-        turn="",
-        message=None,
-    )
-    added = observed(
-        AgentStatePatch(
-            state_id="progress",
-            version=1,
-            ops=[
-                {"op": "add", "path": "/items/-", "value": {"done": False}},
-            ],
-        )
-    )
-    updated = observed(
-        AgentStatePatch(
-            state_id="progress",
-            version=2,
-            ops=[
-                {"op": "replace", "path": "/items/0/done", "value": True},
-            ],
-        ),
-        turn="turn-2",
-    )
-    child = observed(
-        AgentStateSnapshot(state_id="progress", version=0, value={}),
-        agent=CHILD,
-        turn="",
-        message=None,
-    )
-    events = AgentEvents([snapshot, added, updated, child])
-
-    with pytest.raises(ValueError, match="appears on multiple agents"):
-        events.final_state("progress")
-    assert events.root_only().final_state("progress") == {"items": [{"done": True}]}
-    assert events.for_agent(CHILD).final_state("progress") == {}
-    assert events.for_turn("turn-1").final_state("progress") is None
-    assert AgentEvents([snapshot, updated]).final_state("progress") is None
-    assert AgentEvents([snapshot]).final_state("progress") == {"items": []}
-    assert AgentEvents([added]).final_state("progress") is None
-    assert isinstance(added.event, AgentStatePatch)
-    assert added.event.ops[0]["value"] == {"done": False}
 
 
 def test_diagnostics_keep_trajectory_order_and_close_reason_is_agent_specific() -> None:

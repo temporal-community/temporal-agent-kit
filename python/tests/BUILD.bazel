@@ -400,3 +400,33 @@ agent_kit_pytest_test(
         "@pypi//temporalio",
     ],
 )
+
+agent_kit_pytest_test(
+    name = "test_agent_events",
+    srcs = ["test_agent_events.py"],
+    imports = [".."],
+    deps = [
+        ":conftest",
+        "//python/temporal_agent_kit:__init__",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "@pypi//pytest",
+    ],
+)
+
+agent_kit_pytest_test(
+    name = "test_trajectory_activities",
+    srcs = ["test_trajectory_activities.py"],
+    imports = [".."],
+    deps = [
+        ":conftest",
+        "//python/temporal_agent_kit:__init__",
+        "//python/temporal_agent_kit:agent_client",
+        "//python/temporal_agent_kit:trajectory_activities",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/temporal_agent_kit/utils:large_payload",
+        "//python/tests/conformance:script",
+        "//python/tests/conformance:scripted_agent",
+        "@pypi//pytest",
+        "@pypi//temporalio",
+    ],
+)

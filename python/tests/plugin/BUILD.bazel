@@ -1,3 +1,4 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
 load("//bazel:pytest.bzl", "agent_kit_pytest_test")
 
 # Imports the OpenAI Agents plugin through pytest.importorskip (the `# keep` dep).
@@ -14,6 +15,44 @@ agent_kit_pytest_test(
         "//python/temporal_agent_kit/utils:large_payload",
         "//python/tests:conftest",
         "@pypi//pytest",
+        "@pypi//temporalio",
+    ],
+)
+
+agent_kit_pytest_test(
+    name = "test_evaluators",
+    srcs = ["test_evaluators.py"],
+    imports = ["../.."],
+    deps = [
+        ":inline_evaluator_fixture",
+        "//python/examples/openai_hello:evaluators",
+        "//python/temporal_agent_kit:__init__",
+        "//python/temporal_agent_kit:agent",
+        "//python/temporal_agent_kit:agent_client",
+        "//python/temporal_agent_kit:eval_workflow",
+        "//python/temporal_agent_kit:evaluators",
+        "//python/temporal_agent_kit:plugin",
+        "//python/temporal_agent_kit:trajectory_activities",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/temporal_agent_kit/ai_sdks/openai_agents",
+        "//python/temporal_agent_kit/utils:large_payload",
+        "//python/tests:conftest",
+        "//python/tests/conformance:script",
+        "//python/tests/conformance:scripted_agent",
+        "@pypi//pytest",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "inline_evaluator_fixture",
+    srcs = ["inline_evaluator_fixture.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        "//python/temporal_agent_kit:__init__",
+        "//python/temporal_agent_kit:agent",
+        "//python/temporal_agent_kit:evaluators",
         "@pypi//temporalio",
     ],
 )

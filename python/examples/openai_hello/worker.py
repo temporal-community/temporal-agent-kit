@@ -6,7 +6,7 @@ Run from the repo root with:
 Hosts only the OpenAIHelloAgent workflow. Its one tool (`get_weather`) is an inline workflow
 tool with no worker-side body, so there are no tool activities to register — the OpenAI Agents
 plugin registers the model activities (including the streaming one) itself, and
-`AgentKitPlugin` supplies Agent Kit's data converter and activities.
+`AgentKitPlugin` supplies Agent Kit's data converter, activities, and evaluator registrations.
 
 The plugin is wired for the AGENT KIT STREAMING PATH:
   * ``model_params.stream_to_provider=stream_to_provider`` — resolves each streamed model
@@ -30,22 +30,19 @@ import os
 import sys
 from datetime import timedelta
 
-from temporalio.client import Client
-from temporalio.envconfig import ClientConfig
-from temporalio.worker import Worker
-
-from temporal_agent_kit.plugin import AgentKitPlugin
+from examples.openai_hello.evaluators import count_failed_tools, has_reply
+from examples.openai_hello.workflow import TASK_QUEUE, OpenAIHelloAgentWorkflow
 from temporal_agent_kit.ai_sdks.openai_agents import (
     ModelActivityParameters,
     OpenAIAgentsPlugin,
-)
-from temporal_agent_kit.ai_sdks.openai_agents import (
     kit_observer_factory,
     stream_to_provider,
 )
+from temporal_agent_kit.plugin import AgentKitPlugin
 from temporal_agent_kit.utils.task_queue import task_queue_name
-
-from examples.openai_hello.workflow import TASK_QUEUE, OpenAIHelloAgentWorkflow
+from temporalio.client import Client
+from temporalio.envconfig import ClientConfig
+from temporalio.worker import Worker
 
 
 async def main() -> None:
@@ -77,7 +74,8 @@ async def main() -> None:
     # matching the web server.
     connect_config = ClientConfig.load_client_connect_config()
     client = await Client.connect(
-        **connect_config, plugins=[plugin, AgentKitPlugin()]
+        **connect_config,
+        plugins=[plugin, AgentKitPlugin(evaluators=[has_reply, count_failed_tools])],
     )
 
     worker = Worker(

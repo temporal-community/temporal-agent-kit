@@ -13,13 +13,16 @@ Agent authors import the core API from here: ``agent`` (the ``@agent.defn`` / ``
 """
 
 from temporal_agent_kit import agent
+from temporal_agent_kit.agent_events import AgentEvents, ToolCall
 from temporal_agent_kit.agent_workflow import (
     AgentToolContext,
     AgentWorkflowRunner,
 )
 
 __all__ = [
-    "agent",
+    "AgentEvents",
     "AgentToolContext",
     "AgentWorkflowRunner",
+    "ToolCall",
+    "agent",
 ]

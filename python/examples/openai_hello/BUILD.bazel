@@ -8,6 +8,7 @@ agent_kit_module_binary(
     imports = ["../.."],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":evaluators",
         ":workflow",
         "//python/temporal_agent_kit:plugin",
         "//python/temporal_agent_kit/ai_sdks/openai_agents",
@@ -55,4 +56,17 @@ agent_kit_agent_registry(
     ],
     agents = [":OpenAIHelloAgent"],
     visibility = ["//python/tests/web:__pkg__"],
+)
+
+py_library(
+    name = "evaluators",
+    srcs = ["evaluators.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        "//python/temporal_agent_kit:__init__",
+        "//python/temporal_agent_kit:agent",
+        "//python/temporal_agent_kit:evaluators",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+    ],
 )

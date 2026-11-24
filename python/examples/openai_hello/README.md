@@ -27,11 +27,20 @@ streaming activity, to the live turn stream the web UI consumes.
 
 ## Evals authoring reference
 
-[`evaluators.py`](evaluators.py) shows both decorators. `has_reply` uses
-`@agent.eval_defn` to check for a nonblank reply in the final captured turn.
-`count_failed_tools` uses `@agent.activity_eval_defn` to count failed tool calls in
-that same turn. Both take `AgentEvents`, and the worker registers both in
-`AgentKitPlugin(evaluators=[has_reply, count_failed_tools])`.
+[`evaluators.py`](evaluators.py) defines five evaluators that take `AgentEvents`.
+The worker registers them with `AgentKitPlugin(evaluators=EVALUATORS)`.
+
+| Evaluator | Execution | Result |
+| --- | --- | --- |
+| `count_failed_tools` | Activity | Number of failed tool calls on the selected turn |
+| `full_context_understanding` | Activity with an OpenAI judge | Pass or fail on the use of relevant earlier context, or skipped when the turn is self-contained |
+| `reply_is_brief` | Inline | Pass or fail against a 40-word limit per reply on the selected turn |
+| `total_input_tokens` | Inline | Cumulative model input tokens through the selected turn, or skipped when usage is incomplete |
+| `request_type` | Activity with an OpenAI judge | `greeting`, `weather_request`, `general_question`, or `other` for the selected request |
+
+Try “Hi, I’m in Seattle” followed by “What’s the weather here?” Run evals on both
+turns to see the request type change from greeting to weather request. The second
+turn also gives the context judge a concrete reference to check.
 
 After a turn completes, use a Kit-configured client and the agent worker's task queue
 to run its evals:
@@ -47,7 +56,7 @@ result = await client.execute_workflow(
     task_queue="openai-hello",
 )
 print(result.results["count_failed_tools"])
-print(result.results["has_reply"])
+print(result.results["request_type"])
 ```
 
 ## Layout

@@ -64,9 +64,12 @@ py_library(
     imports = ["../.."],
     visibility = ["//python:__subpackages__"],
     deps = [
+        ":workflow",
         "//python/temporal_agent_kit:__init__",
         "//python/temporal_agent_kit:agent",
         "//python/temporal_agent_kit:evaluators",
         "//python/temporal_agent_kit/agent_protocol:__init__",
+        "@pypi//openai_agents",
+        "@pypi//pydantic",
     ],
 )

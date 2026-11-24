@@ -17,13 +17,24 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 with workflow.unsafe.imports_passed_through():
-    from examples.openai_hello.evaluators import count_failed_tools, has_reply
+    from examples.openai_hello import evaluators as hello_evals
+    from examples.openai_hello.evaluators import (
+        count_failed_tools,
+        reply_is_brief,
+        total_input_tokens,
+    )
     from temporal_agent_kit import AgentEvents, agent
     from temporal_agent_kit.agent_client import AgentClient
     from temporal_agent_kit.agent_protocol import (
         AgentConfig,
         AgentEvent,
+        AgentStreamItem,
+        MessageAccepted,
+        MessageDisposition,
+        MessageHandlerEnd,
+        TokenUsage,
         ToolErrorEvent,
+        ToolStartEvent,
     )
     from temporal_agent_kit.ai_sdks.openai_agents import OpenAIAgentsPlugin
     from temporal_agent_kit.eval_workflow import RunEvaluatorsWorkflow
@@ -81,6 +92,67 @@ def test_plugin_validates_explicit_evaluator_registration():
         AgentKitPlugin(evaluators=[count_failed_tools, count_failed_tools])
 
 
+async def test_hello_judges_receive_the_selected_request_and_earlier_context(monkeypatch):
+    def event(turn: int, payload: AgentStreamItem) -> AgentEvent:
+        return AgentEvent(
+            agent_id="hello",
+            turn_id=f"turn-{turn}",
+            turn_number=turn,
+            message_id=f"msg-{turn}",
+            timestamp=turn,
+            event=payload,
+        )
+
+    def message(text: str) -> MessageAccepted:
+        return MessageAccepted(
+            handler="ask", payload={"text": text}, disposition=MessageDisposition.OPENED
+        )
+
+    first = [
+        event(1, message("Hi, I'm in Seattle.")),
+        event(1, MessageHandlerEnd(output={"text": "Hello!"})),
+    ]
+    second = [
+        event(2, message("What's the weather here?")),
+        event(2, ToolStartEvent(
+            tool_id="weather", tool_name="get_weather", tool_input={"city": "Seattle"}
+        )),
+        event(2, MessageHandlerEnd(output={"text": "It's 72°F and sunny in Seattle."})),
+    ]
+    judged = []
+
+    async def judge(_instructions, evidence, output_type):
+        judged.append(evidence)
+        if output_type is hello_evals._ContextJudgment:
+            return output_type(verdict="pass", reason="The lookup used Seattle.")
+        label = "greeting" if not evidence["earlier"] else "weather_request"
+        return output_type(request_type=label, reason="Classified the selected request.")
+
+    monkeypatch.setattr(hello_evals, "_judge", judge)
+
+    first_turn = AgentEvents(first)
+    later_turn = AgentEvents(first + second)
+    assert (await hello_evals.full_context_understanding(first_turn)).status == "skipped"
+    assert (await hello_evals.request_type(first_turn)).value == "greeting"
+    assert (await hello_evals.full_context_understanding(later_turn)).value == 1
+    assert (await hello_evals.request_type(later_turn)).value == "weather_request"
+    assert (await total_input_tokens(later_turn)).status == "skipped"
+    earlier = [
+        {"role": "user", "text": "Hi, I'm in Seattle."},
+        {"role": "assistant", "text": "Hello!"},
+    ]
+    assert judged == [
+        {"earlier": [], "requests": ["Hi, I'm in Seattle."]},
+        {
+            "earlier": earlier,
+            "requests": ["What's the weather here?"],
+            "replies": ["It's 72°F and sunny in Seattle."],
+            "tool_calls": [{"name": "get_weather", "arguments": {"city": "Seattle"}}],
+        },
+        {"earlier": earlier, "requests": ["What's the weather here?"]},
+    ]
+
+
 @pytest.mark.parametrize("codec", [None, _WrappingCodec()])
 @pytest.mark.parametrize(
     ("threshold", "offloaded"),
@@ -104,7 +176,8 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
         evaluators={
             SCRIPTED_AGENT: [
                 count_failed_tools,
-                has_reply,
+                reply_is_brief,
+                total_input_tokens,
                 unavailable_inline_evaluator,
                 prior_failed_tools,
                 invalid_inline_result,
@@ -141,7 +214,7 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
             script = Script(
                 steps=[
                     ToolStep(id="failing-tool", name="fail", args={"message": "failed"}),
-                    ModelStep(reply=[source_text]),
+                    ModelStep(reply=[source_text], usage=TokenUsage(input_tokens=19)),
                 ],
             )
             failed = await source.submit_message("run_enqueue", script.model_dump(mode="json"))
@@ -171,16 +244,19 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
     assert clean_result.source.turn_id == clean.turn_id
     assert set(clean_result.results) == {
         "count_failed_tools",
-        "has_reply",
         "invalid_inline_result",
         "prior_failed_tools",
+        "reply_is_brief",
+        "total_input_tokens",
         "unavailable_inline_evaluator",
         "unavailable_judge",
     }
     assert failed_result.results["count_failed_tools"].value == 1
     assert clean_result.results["count_failed_tools"].value == 0
-    assert failed_result.results["has_reply"].value == 1
-    assert clean_result.results["has_reply"].value == 0
+    assert failed_result.results["reply_is_brief"].value == 0
+    assert clean_result.results["reply_is_brief"].status == "skipped"
+    assert failed_result.results["total_input_tokens"].value == 19
+    assert clean_result.results["total_input_tokens"].value == 19
     missing = clean_result.results["unavailable_inline_evaluator"]
     assert missing == EvaluatorResult(
         status="error",

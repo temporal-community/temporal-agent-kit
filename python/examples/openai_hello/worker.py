@@ -3,7 +3,7 @@
 Run from the repo root with:
     uv run --group examples python -m examples.openai_hello.worker
 
-Hosts only the OpenAIHelloAgent workflow. Its one tool (`get_weather`) is an inline workflow
+Hosts OpenAIHelloAgent and its evals. Its one tool (`get_weather`) is an inline workflow
 tool with no worker-side body, so there are no tool activities to register — the OpenAI Agents
 plugin registers the model activities (including the streaming one) itself, and
 `AgentKitPlugin` supplies Agent Kit's data converter, activities, and evaluator registrations.
@@ -30,7 +30,7 @@ import os
 import sys
 from datetime import timedelta
 
-from examples.openai_hello.evaluators import count_failed_tools, has_reply
+from examples.openai_hello.evaluators import EVALUATORS
 from examples.openai_hello.workflow import TASK_QUEUE, OpenAIHelloAgentWorkflow
 from temporal_agent_kit.ai_sdks.openai_agents import (
     ModelActivityParameters,
@@ -75,7 +75,7 @@ async def main() -> None:
     connect_config = ClientConfig.load_client_connect_config()
     client = await Client.connect(
         **connect_config,
-        plugins=[plugin, AgentKitPlugin(evaluators=[has_reply, count_failed_tools])],
+        plugins=[plugin, AgentKitPlugin(evaluators=EVALUATORS)],
     )
 
     worker = Worker(

@@ -119,7 +119,7 @@ from temporal_agent_kit.code_mode import (
     okf_code_mode_tool,
     vfs_mount,
 )
-from temporal_agent_kit.evaluators import activity_eval_defn, eval_defn
+from temporal_agent_kit.evals import activity_eval_scorer_defn, eval_scorer_defn, eval_suite_defn
 from temporal_agent_kit.state.decl import StateDecl, state
 from temporal_agent_kit.subagent_toolset import (
     SubagentToolPolicy,
@@ -142,7 +142,7 @@ __all__ = [
     "ToolApprovalPolicy",
     "WorkflowDefnOptions",
     "accepts",
-    "activity_eval_defn",
+    "activity_eval_scorer_defn",
     "activity_tool_defn",
     "callback_tool_defn",
     "code_mode_tool",
@@ -156,7 +156,8 @@ __all__ = [
     "InMemoryFileSystem",
     "VFSMount",
     "defn",
-    "eval_defn",
+    "eval_scorer_defn",
+    "eval_suite_defn",
     "init",
     "StateDecl",
     "SubagentToolPolicy",

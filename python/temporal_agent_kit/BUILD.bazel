@@ -10,9 +10,7 @@ py_library(
         ":agent",
         ":agent_events",
         ":agent_workflow",
-        ":eval_workflow",
-        ":evaluators",
-        ":trajectory_activities",
+        ":evals",
     ],
 )
 
@@ -22,8 +20,7 @@ py_library(
     imports = [".."],
     visibility = ["//:__subpackages__"],
     deps = [
-        ":eval_workflow",
-        ":evaluators",
+        ":evals",
         ":subagent_activities",
         ":trajectory_activities",
         "//python/temporal_agent_kit/code_mode:__init__",
@@ -101,7 +98,7 @@ py_library(
     visibility = ["//:__subpackages__"],
     deps = [
         ":agent_workflow",
-        ":evaluators",
+        ":evals",
         ":subagent_toolset",
         "//python/temporal_agent_kit/agent_protocol:__init__",
         "//python/temporal_agent_kit/code_mode:__init__",
@@ -215,6 +212,7 @@ py_library(
     imports = [".."],
     visibility = ["//python:__subpackages__"],
     deps = [
+        ":agent_client",
         "//python/temporal_agent_kit/agent_protocol:__init__",
         "@pypi//pydantic",
         "@pypi//temporalio",
@@ -222,26 +220,12 @@ py_library(
 )
 
 py_library(
-    name = "evaluators",
-    srcs = ["evaluators.py"],
+    name = "evals",
+    srcs = ["evals.py"],
     imports = [".."],
     visibility = ["//python:__subpackages__"],
     deps = [
         ":agent_events",
-        "//python/temporal_agent_kit/agent_protocol:__init__",
-        "@pypi//pydantic",
-        "@pypi//temporalio",
-    ],
-)
-
-py_library(
-    name = "eval_workflow",
-    srcs = ["eval_workflow.py"],
-    imports = [".."],
-    visibility = ["//python:__subpackages__"],
-    deps = [
-        ":agent_events",
-        ":evaluators",
         ":trajectory_activities",
         "//python/temporal_agent_kit/agent_protocol:__init__",
         "@pypi//pydantic",

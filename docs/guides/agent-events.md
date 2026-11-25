@@ -1,55 +1,87 @@
-# Read agent trajectories in evals
+# Evaluate agent sessions
 
-`AgentEvents` wraps native Temporal Agent Kit `AgentEvent` envelopes from one agent tree.
-Pass it the events your evaluator retrieved, in stream order. The same wrapper works with
-a root stream or a merged stream that includes subagents.
+An eval suite scores an agent session from its start through one completed turn. Its
+scorers read that trajectory through `AgentEvents`, a read-only view over native `AgentEvent`
+envelopes from one agent tree.
 
-## Run evals for a turn
+## Run an eval suite
 
-Import `EvaluatorInput` and `EvaluatorResult` from `temporal_agent_kit`. Declare an async
-evaluator with the signature `(EvaluatorInput) -> EvaluatorResult` and register it on
-`AgentKitPlugin(evaluators=[...])`. A list applies to every source agent
-evaluated by that worker. Use a mapping keyed by source Workflow type to register
-different evaluators on a shared worker. A source Workflow type missing from the
-mapping fails planning. Use an empty list for a specific type to skip its evals.
+Write each scorer as an async function with the signature `(Trajectory) -> ScorerResult`:
 
-- `@agent.eval_defn` runs the evaluator inline as Workflow code inside `RunEvaluatorsWorkflow`.
+- `@agent.eval_scorer_defn` runs the scorer as Workflow code inside the eval suite's workflow.
   It follows Workflow rules: it must be deterministic, and it does any I/O, such as model
-  calls, through Activities it starts. Use it for checks computed from the events alone, or
-  for multi-step evals where each step should be retried and recorded separately.
-- `@agent.activity_eval_defn` runs the whole evaluator in one Activity, retried as a unit.
+  calls, through Activities it starts. Use it for checks computed from the events alone, or for
+  multi-step scorers where each step should be retried and recorded separately.
+- `@agent.activity_eval_scorer_defn` runs the whole scorer in one Activity, retried as a unit.
   Use it to call a model or service directly.
 
-Import `RunEvaluatorsWorkflow` and `AgentTurn` from `temporal_agent_kit`. Start
-`RunEvaluatorsWorkflow.run` with an `AgentTurn` containing the source `workflow_id`,
-`run_id`, and `turn_id`. The Kit selects the source agent's evaluators,
-captures the retained events through that turn once, and uses that capture for both
-kinds of evaluator. When External Storage is configured, the Temporal SDK applies
-the configured size threshold and driver selection to the trajectory, plan, and
-scores. Payloads below the threshold stay inline in Workflow history. For offloaded
-payloads, history contains a native claim check and the SDK retrieves the data.
-The capture ends at the requested turn's `TurnEnded` marker. The evaluator input carries the
-requested `turn_id`. Use `evaluation.turn_events` to score that turn and `evaluation.events`
-to inspect the full capture, including earlier retained context. Both are `AgentEvents` views.
-The capture reads the source agent's stream. Each subagent has its own stream.
-See the [OpenAI Hello evaluators](../../python/examples/openai_hello/evaluators.py).
+Import `ScorerResult`, `Trajectory`, `AgentTurn` and `EvalSuiteResult` from `temporal_agent_kit`.
+A completed result needs a value. A `value_range` is inclusive and needs a numeric value inside it.
 
-Capture subscribes by Workflow ID and starts with the latest run. The supplied `run_id`
-identifies the source execution for evaluator routing. Use a distinct Workflow ID for each
-independent session you plan to evaluate. Reusing an ID can make an earlier session's turn
-unavailable or cause capture to read a matching turn from the newer session.
+Group scorers into an eval suite and register the suite on a worker like any workflow:
 
-If your agent uses Continue-As-New, pass its `WorkflowStreamState` into the successor run
-so the stream can still serve retained events from earlier runs.
+```python
+from temporal_agent_kit import ScorerResult, Trajectory, agent
 
-An evaluator can return `skipped` or `error` with a reason. The Kit sets
-`error_kind="reported"` when an evaluator returns an error. If an evaluator raises,
-returns an invalid result, or cannot load, the Kit records `error_kind="execution"`
-and includes the exception type in the reason. Activity failures follow the Activity's
-retry policy before becoming results. The runner still returns the other evaluators' results.
 
-An execution error is final for that eval run. After deploying a fix, start a new
-`RunEvaluatorsWorkflow` for the same `AgentTurn` while the source stream still retains it.
+@agent.eval_scorer_defn
+async def reply_is_brief(trajectory: Trajectory) -> ScorerResult:
+    text = trajectory.last_turn.reply_text or ""
+    return ScorerResult(status="completed", value=int(len(text.split()) <= 40))
+
+
+@agent.eval_suite_defn(name="HelloEvals")
+class HelloEvals:
+    scorers = [reply_is_brief]
+```
+
+A suite does not name an agent. Start it with an `AgentTurn` holding the agent's
+`workflow_id`, `run_id`, and `turn_number` to score any agent's session through that turn. With
+`AgentKitPlugin` on the client, the worker registers the trajectory capture Activity and the
+suite's Activity scorers. The result is an `EvalSuiteResult` with one `ScorerResult` per
+scorer, keyed by function name.
+
+```python
+from temporal_agent_kit import AgentTurn
+
+result = await client.execute_workflow(
+    HelloEvals.run,
+    AgentTurn(workflow_id=workflow_id, run_id=run_id, turn_number=turn_number),
+    id=eval_workflow_id,
+    task_queue=task_queue,
+)
+```
+
+The suite checks the agent's status first and fails with `TurnNotCompleted` if the turn has
+not completed. It then reads the session's events through that turn once, using
+`AgentClient.attach` pinned to `run_id`, so a reused workflow ID never substitutes another run.
+Every scorer receives the same capture. When External Storage is configured, the Temporal SDK
+applies the configured size threshold and driver selection to the trajectory and scores.
+
+A `Trajectory` holds:
+
+- `events`: every captured event from the session's start through the end of the turn.
+- `last_turn`: the same events narrowed to that final turn, a convenience for scorers
+  that focus on it.
+- `source` and `root_agent_id`: the turn the trajectory ends at and the agent that ran it.
+
+A scorer judges the whole trajectory, so its score can reflect something that happened in
+any earlier turn.
+
+By default a scorer sees only the root agent's events. Pass `include_subagents=True` to the
+scorer's decorator to score the whole agent tree: `events` and `last_turn` then also include
+the events of every subagent the agent drove, in merged order. A subagent stream that cannot be
+read fails the run instead of producing a partial tree.
+
+A scorer can return `skipped` or `error` with a reason. The Kit sets `error_kind="reported"` when
+a scorer returns an error. If a scorer raises, returns an invalid result, or cannot run, the Kit
+records `error_kind="execution"` and includes the exception type in the reason. Activity failures
+follow the Activity's retry policy before becoming results. The suite still returns the other
+scorers' results.
+
+An execution error is final for that eval run. After deploying a fix, run the suite again on the
+same `AgentTurn`. See the
+[OpenAI Hello scorers](../../python/examples/openai_hello/evals.py).
 
 ## Inspect a retrieved trajectory
 

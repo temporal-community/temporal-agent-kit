@@ -419,10 +419,12 @@ agent_kit_pytest_test(
     imports = [".."],
     deps = [
         ":conftest",
-        "//python/temporal_agent_kit:__init__",
         "//python/temporal_agent_kit:agent_client",
+        "//python/temporal_agent_kit:evals",
+        "//python/temporal_agent_kit:subagent_activities",
         "//python/temporal_agent_kit:trajectory_activities",
         "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/temporal_agent_kit/utils:large_payload",
         "//python/tests/conformance:script",
         "//python/tests/conformance:scripted_agent",
         "@pypi//pytest",

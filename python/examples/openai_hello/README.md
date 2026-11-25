@@ -27,40 +27,38 @@ streaming activity, to the live turn stream the web UI consumes.
 
 ## Evals authoring reference
 
-[`evaluators.py`](evaluators.py) defines five evaluators that take `EvaluatorInput`.
-The worker registers them with `AgentKitPlugin(evaluators=EVALUATORS)`.
+[`evals.py`](evals.py) defines five scorers that take a `Trajectory` and groups
+them in the `OpenAIHelloEvals` eval suite. The worker registers the suite next to the agent.
 The two judge Activities call the OpenAI Responses API directly for structured results.
 
-| Evaluator | Execution | Result |
+| Scorer | Execution | Result |
 | --- | --- | --- |
-| `count_failed_tools` | Activity | Number of failed tool calls on the selected turn |
+| `count_failed_tools` | Activity | Number of failed tool calls in the last turn |
 | `full_context_understanding` | Activity with an OpenAI judge | Pass or fail on the use of relevant earlier context, or skipped when the turn is self-contained |
-| `reply_is_brief` | Inline | Pass or fail against a 40-word limit per reply on the selected turn |
-| `total_input_tokens` | Inline | Cumulative model input tokens through the selected turn, or skipped when usage is incomplete |
-| `request_type` | Activity with an OpenAI judge | `greeting`, `weather_request`, `general_question`, or `other` for the selected request |
+| `reply_is_brief` | Inline | Pass or fail against a 40-word limit per reply in the last turn |
+| `total_input_tokens` | Inline | Cumulative model input tokens across the session, or skipped when usage is incomplete |
+| `request_type` | Activity with an OpenAI judge | `greeting`, `weather_request`, `general_question`, or `other` for the last request |
 
 Try “Hi, I’m in Seattle” followed by “What’s the weather here?” Run evals on both
 turns to see the request type change from greeting to weather request. The second
 turn also gives the context judge a concrete reference to check.
 
-After a turn completes, use a Kit-configured client and the agent worker's task queue
-to run its evals:
+After a turn completes, use a Kit-configured client and the worker's task queue to run the
+suite on it:
 
 ```python
-from temporal_agent_kit import AgentTurn, RunEvaluatorsWorkflow
+from examples.openai_hello.evals import OpenAIHelloEvals
+from temporal_agent_kit import AgentTurn
 
 result = await client.execute_workflow(
-    RunEvaluatorsWorkflow.run,
-    AgentTurn(workflow_id=workflow_id, run_id=run_id, turn_id=turn_id),
+    OpenAIHelloEvals.run,
+    AgentTurn(workflow_id=workflow_id, run_id=run_id, turn_number=turn_number),
     id=eval_workflow_id,
     task_queue="openai-hello",
 )
 print(result.results["count_failed_tools"])
 print(result.results["request_type"])
 ```
-
-Use a distinct Workflow ID for each session you plan to evaluate. See the
-[evaluator guide](../../../docs/guides/agent-events.md) for how capture selects a stream.
 
 ## Layout
 

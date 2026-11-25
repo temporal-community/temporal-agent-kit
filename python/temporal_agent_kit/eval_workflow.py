@@ -75,8 +75,12 @@ def eval_suite_defn(
             )
         definitions: dict[str, _EvaluatorDefinition] = {}
         for evaluator in evaluators:
-            definition = getattr(evaluator, _EVALUATOR_ATTR, None)
-            if not isinstance(definition, _EvaluatorDefinition):
+            metadata = getattr(evaluator, _EVALUATOR_ATTR, None)
+            if metadata == "activity":
+                definition = _EvaluatorDefinition("activity", evaluator)
+            elif isinstance(metadata, _EvaluatorDefinition):
+                definition = metadata
+            else:
                 raise TypeError(
                     f"{suite.__name__}.evaluators accepts only @agent.eval_defn "
                     "and @agent.activity_eval_defn functions"

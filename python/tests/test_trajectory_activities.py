@@ -18,10 +18,11 @@ from temporal_agent_kit.agent_protocol import (
 )
 from temporal_agent_kit.subagent_activities import SubagentActivities
 from temporal_agent_kit.trajectory_activities import AgentTurn, TrajectoryActivities
-from temporalio import workflow
-from temporalio.client import WorkflowFailureError
+from temporalio import activity, workflow
+from temporalio.client import WorkflowFailureError, WorkflowHandle
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.service import RPCError, RPCStatusCode
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
@@ -242,6 +243,61 @@ async def test_merged_capture_fails_if_a_child_turn_start_is_missing(worker, mon
 
     assert exc.value.type == "IncompleteTrajectory"
     assert exc.value.non_retryable
+
+
+@pytest.mark.parametrize("failing_stream", ["parent", "subagent"])
+async def test_capture_retries_after_a_transient_stream_read_error(
+    worker, monkeypatch, failing_stream
+):
+    handle = await worker.start_workflow(
+        ScriptedAgent.run, AgentConfig(), id="agent", task_queue="trajectory-tests"
+    )
+    assert handle.result_run_id is not None
+    agent = AgentClient(worker, handle.id)
+    script = Script(
+        steps=[
+            SubagentStartStep(name="child"),
+            SubagentSendStep(
+                name="child", script=Script(steps=[ModelStep(reply=["Child reply."])])
+            ),
+            ModelStep(reply=["Parent reply."]),
+        ]
+    )
+    accepted = await agent.submit_message("run_enqueue", script.model_dump(mode="json"))
+    await _wait_for_completed_turn(agent, accepted.turn_number)
+    [child] = (await agent.get_status()).subagents
+    failed_workflow = handle.id if failing_stream == "parent" else child.workflow_id
+    poll_attempts: set[int] = set()
+    start_update = WorkflowHandle.start_update
+
+    async def fail_first_capture_poll(poll_handle, update, *args, **kwargs):
+        if (
+            poll_handle.id == failed_workflow
+            and update == "__temporal_workflow_stream_poll"
+            and activity.in_activity()
+        ):
+            attempt = activity.info().attempt
+            poll_attempts.add(attempt)
+            if attempt == 1:
+                raise RPCError("Concurrent update limit", RPCStatusCode.RESOURCE_EXHAUSTED, b"")
+        return await start_update(poll_handle, update, *args, **kwargs)
+
+    monkeypatch.setattr(WorkflowHandle, "start_update", fail_first_capture_poll)
+    turn = AgentTurn(
+        workflow_id=handle.id, run_id=handle.result_run_id, turn_number=accepted.turn_number
+    )
+    captured = await worker.execute_workflow(
+        CaptureTrajectory.run,
+        turn,
+        id="capture-with-retry",
+        task_queue="trajectory-tests",
+        execution_timeout=timedelta(seconds=15),
+    )
+
+    assert poll_attempts == {1, 2}
+    events = AgentEvents(captured)
+    assert events.parent_events.reply_text == "Parent reply."
+    assert events.for_agent(child.subagent_id).reply_text == "Child reply."
 
 
 async def test_capture_rejects_active_and_future_turns(worker, monkeypatch):

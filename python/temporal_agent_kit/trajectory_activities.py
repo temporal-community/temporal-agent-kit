@@ -82,6 +82,7 @@ class TrajectoryActivities:
                 skip_until_turn_id=None,
                 select=select_replay,
                 should_stop=should_stop,
+                raise_on_read_error=True,
             )
             async with aclosing(merged) as items:
                 async for event, _ in items:

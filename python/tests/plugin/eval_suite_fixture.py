@@ -1,5 +1,7 @@
 """An eval suite imported by the Workflow sandbox during integration tests."""
 
+from temporal_agent_kit import EvaluatorInput, EvaluatorResult, agent
+from temporal_agent_kit.agent_protocol import MessageHandlerEnd, ToolErrorEvent
 from temporalio import workflow
 from temporalio.exceptions import ApplicationError
 
@@ -9,8 +11,6 @@ with workflow.unsafe.imports_passed_through():
         reply_is_brief,
         total_input_tokens,
     )
-    from temporal_agent_kit import EvaluatorInput, EvaluatorResult, agent
-    from temporal_agent_kit.agent_protocol import MessageHandlerEnd, ToolErrorEvent
 
 
 @agent.eval_defn

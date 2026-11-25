@@ -260,6 +260,7 @@ async def _run_merge(
     drip_workflows: dict[str, float] | None = None,
     stall_grace_seconds: float = 5.0,
     resume_offsets: list[int] | None = None,
+    raise_on_read_error: bool = False,
 ) -> list[AgentEvent]:
     """Drive the merge over scripted streams to exhaustion (or should_stop), returning the output.
 
@@ -288,6 +289,7 @@ async def _run_merge(
             select=select,
             should_stop=should_stop or _never_stop,
             stall_grace_seconds=stall_grace_seconds,
+            raise_on_read_error=raise_on_read_error,
         ):
             out.append(ev)
             if resume_offsets is not None:
@@ -871,6 +873,22 @@ async def test_healthy_concurrent_child_is_not_given_up_under_stall_grace():
     )
     assert_valid_merge(merged, streams)
     assert not [m for m in merged if m.event.type == AgentEventType.SUBAGENT_STREAM_UNAVAILABLE]
+
+
+async def test_stalled_child_raises_when_read_errors_propagate():
+    streams = {
+        "P": [_ts("P", 1), _ms("P", 1, child="C", child_turn=1), _rr("P", 1, child="C", child_turn=1)],
+        "C": [],
+    }
+    with pytest.raises(TimeoutError, match="Timed out reading subagent stream 'C'"):
+        await _run_merge(
+            streams,
+            root="P",
+            select=select_replay,
+            live_tail_workflows={"C"},
+            stall_grace_seconds=0.01,
+            raise_on_read_error=True,
+        )
 
 
 async def test_unreadable_root_ends_merge_without_raising():

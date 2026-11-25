@@ -164,7 +164,10 @@ def _define_evaluator(
         ):
             raise TypeError(f"{decorator} requires (EvaluatorInput) -> EvaluatorResult")
 
-        vars(evaluator)[_EVALUATOR_ATTR] = _EvaluatorDefinition(kind, evaluator)
+        # A passed-through Activity only needs metadata that survives sandbox reimports.
+        vars(evaluator)[_EVALUATOR_ATTR] = (
+            kind if kind == "activity" else _EvaluatorDefinition(kind, evaluator)
+        )
         return evaluator
 
     return decorate(fn) if fn is not None else decorate

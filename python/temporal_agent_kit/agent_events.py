@@ -29,13 +29,19 @@ class AgentEvents:
 
     The iterable is consumed once. Views share the original envelopes and payloads,
     which callers should treat as read-only.
+
+    Captures start with an event from the source agent. When supplying another
+    sequence, pass ``parent_agent_id`` if its first event belongs to a subagent.
     """
 
-    def __init__(self, events: Iterable[AgentEvent]) -> None:
+    def __init__(self, events: Iterable[AgentEvent], *, parent_agent_id: str | None = None) -> None:
         self._events = tuple(events)
+        if parent_agent_id is None and self._events:
+            parent_agent_id = self._events[0].agent_id
+        self._parent_agent_id = parent_agent_id
 
     def _view(self, events: Iterable[AgentEvent]) -> AgentEvents:
-        return AgentEvents(events)
+        return AgentEvents(events, parent_agent_id=self._parent_agent_id)
 
     @property
     def all(self) -> list[AgentEvent]:
@@ -52,6 +58,13 @@ class AgentEvents:
     def for_agent(self, agent_id: str) -> AgentEvents:
         """Keep events emitted by this exact agent ID."""
         return self._view(item for item in self._events if item.agent_id == agent_id)
+
+    @property
+    def parent_events(self) -> AgentEvents:
+        """Keep events emitted by the source agent at the root of the capture."""
+        if self._parent_agent_id is None:
+            return self
+        return self.for_agent(self._parent_agent_id)
 
     def for_turn(self, turn_id: str) -> AgentEvents:
         """Keep the exact turn ID on the envelope. Child turns have their own IDs."""

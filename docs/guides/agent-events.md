@@ -22,8 +22,10 @@ mapping fails planning. Use an empty list for a specific type to skip its evals.
 
 Import `RunEvaluatorsWorkflow` and `AgentTurn` from `temporal_agent_kit`. Start
 `RunEvaluatorsWorkflow.run` with an `AgentTurn` containing the source `workflow_id`,
-`run_id`, and `turn_id`. The Kit selects the source agent's evaluators,
-captures the retained events through that turn once, and uses that capture for both
+`run_id`, and `turn_number`. Capture reads the specified run even if the Workflow ID
+has been reused. If the turn hasn't completed, capture fails with `TurnNotCompleted`
+before reading the stream. The Kit selects the source agent's evaluators, captures
+the retained events through that turn once, and uses that capture for both
 kinds of evaluator. When External Storage is configured, the Temporal SDK applies
 the configured size threshold and driver selection to the trajectory, plan, and
 scores. Payloads below the threshold stay inline in Workflow history. For offloaded
@@ -31,16 +33,18 @@ payloads, history contains a native claim check and the SDK retrieves the data.
 The capture ends at the requested turn's `TurnEnded` marker. The evaluator input carries the
 requested `turn_id`. Use `evaluation.turn_events` to score that turn and `evaluation.events`
 to inspect the full capture, including earlier retained context. Both are `AgentEvents` views.
-The capture reads the source agent's stream. Each subagent has its own stream.
+Capture merges retained subagent turns into `evaluation.events`. The merger uses
+dispatch and reply events to keep child turns in order, including nested subagents.
+If a retained dispatch or reply points to a child turn whose start or end is missing,
+capture fails with `IncompleteTrajectory`.
+
+Use `evaluation.events.parent_events` for the source agent's events across the capture.
+`evaluation.turn_events` selects the requested `turn_id`. Subagent events keep their own
+agent and turn IDs and can be selected with `evaluation.events.for_agent(subagent_id)`.
 See the [OpenAI Hello evaluators](../../python/examples/openai_hello/evaluators.py).
 
-Capture subscribes by Workflow ID and starts with the latest run. The supplied `run_id`
-identifies the source execution for evaluator routing. Use a distinct Workflow ID for each
-independent session you plan to evaluate. Reusing an ID can make an earlier session's turn
-unavailable or cause capture to read a matching turn from the newer session.
-
-If your agent uses Continue-As-New, pass its `WorkflowStreamState` into the successor run
-so the stream can still serve retained events from earlier runs.
+If your agent uses Continue-As-New, carry its `WorkflowStreamState` and turn numbering into
+the successor run to evaluate earlier turns using that run's ID.
 
 An evaluator can return `skipped` or `error` with a reason. The Kit sets
 `error_kind="reported"` when an evaluator returns an error. If an evaluator raises,

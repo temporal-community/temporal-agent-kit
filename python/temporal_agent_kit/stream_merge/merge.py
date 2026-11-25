@@ -124,6 +124,7 @@ class _Merge:
         from_offset: int,
         is_child: bool,
         skip_until_turn_id: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Mount a stream as a new cursor (idempotent — a re-used child is mounted once).
 
@@ -151,6 +152,7 @@ class _Merge:
             mount_index=self._mount_seq,
             from_offset=from_offset,
             skip_until_turn_id=skip_until_turn_id,
+            run_id=run_id,
         )
         self._mount_seq += 1
 
@@ -173,6 +175,7 @@ class _Merge:
         self,
         *,
         root_workflow_id: str,
+        root_run_id: str | None,
         root_from_offset: int,
         skip_until_turn_id: str | None,
     ) -> AsyncIterator[MergedItem]:
@@ -181,6 +184,7 @@ class _Merge:
             from_offset=root_from_offset,
             is_child=False,
             skip_until_turn_id=skip_until_turn_id,
+            run_id=root_run_id,
         )
         try:
             async with contextlib.aclosing(self._drive()) as items:
@@ -462,6 +466,7 @@ async def merge_stream(
     select: SelectPolicy,
     should_stop: ShouldStop,
     stall_grace_seconds: float = DEFAULT_STALL_GRACE_SECONDS,
+    root_run_id: str | None = None,
 ) -> AsyncIterator[MergedItem]:
     """Drive one gated k-way merge, yielding ``(event, resume_offset)`` pairs (see :data:`MergedItem`).
 
@@ -475,7 +480,8 @@ async def merge_stream(
     later ``subagent_reply_received`` is released by the unmounted-stuck give-up; subagents dispatched
     at/after the offset mount and bracket-merge normally. ``select`` decides the order of
     genuinely-concurrent events; ``should_stop`` ends the run after a chosen terminal event. Always
-    honors per-stream offset order and both brackets.
+    honors per-stream offset order and both brackets. ``root_run_id`` pins the root stream to one
+    run of a reused workflow ID. Subagent workflow IDs are unique per parent run, so they need none.
 
     A subagent stream that can't be read (an over-subscribed workflow, a closed run whose history
     has expired) or stalls is given up on — its close gate released so the parent flows, and a
@@ -492,6 +498,7 @@ async def merge_stream(
     async with contextlib.aclosing(
         engine.run(
             root_workflow_id=root_workflow_id,
+            root_run_id=root_run_id,
             root_from_offset=root_from_offset,
             skip_until_turn_id=skip_until_turn_id,
         )

@@ -1,4 +1,4 @@
-"""Inline evaluator imported by the Workflow sandbox during integration tests."""
+"""Inline evaluators imported by the Workflow sandbox during integration tests."""
 
 from temporalio import workflow
 
@@ -14,6 +14,11 @@ async def clear_reply_text(evaluation: EvaluatorInput) -> EvaluatorResult:
         if isinstance(item.event, MessageHandlerEnd):
             item.event.output["text"] = ""
     return EvaluatorResult(status="completed", value=len(replies))
+
+
+@agent.eval_defn
+async def inline_reply_length(evaluation: EvaluatorInput) -> EvaluatorResult:
+    return EvaluatorResult(status="completed", value=len(evaluation.turn_events.reply_text or ""))
 
 
 @agent.eval_defn()

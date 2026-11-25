@@ -216,6 +216,8 @@ py_library(
     visibility = ["//python:__subpackages__"],
     deps = [
         "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/temporal_agent_kit/stream_merge:__init__",
+        "//python/temporal_agent_kit/stream_merge:cursor",
         "@pypi//pydantic",
         "@pypi//temporalio",
     ],

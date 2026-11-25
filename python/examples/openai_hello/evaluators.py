@@ -1,10 +1,12 @@
-"""Inline checks and Activity-backed judges for OpenAI Hello."""
+"""Activity-backed checks and judges for OpenAI Hello."""
 
 from __future__ import annotations
 
 import json
 from typing import Literal, TypeVar
 
+from examples.openai_hello.workflow import DEFAULT_MODEL
+from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from temporal_agent_kit import AgentEvents, EvaluatorInput, EvaluatorResult, agent
 from temporal_agent_kit.agent_protocol import (
@@ -54,9 +56,6 @@ _Judgment = TypeVar("_Judgment", bound=BaseModel)
 async def _judge(
     instructions: str, evidence: dict[str, object], output_type: type[_Judgment]
 ) -> _Judgment:
-    from examples.openai_hello.workflow import DEFAULT_MODEL
-    from openai import AsyncOpenAI
-
     async with AsyncOpenAI() as client:
         response = await client.responses.parse(
             model=DEFAULT_MODEL,
@@ -108,7 +107,7 @@ async def count_failed_tools(evaluation: EvaluatorInput) -> EvaluatorResult:
 @agent.activity_eval_defn
 async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorResult:
     """Judge whether the selected turn used the earlier context it depended on."""
-    earlier, requests, replies = _dialogue(evaluation.events, evaluation.turn_id)
+    earlier, requests, replies = _dialogue(evaluation.events.parent_events, evaluation.turn_id)
     if not any(message["role"] == "user" for message in earlier):
         return EvaluatorResult(status="skipped", reasoning="No earlier user context.")
     if not requests or not replies:
@@ -134,7 +133,7 @@ async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorRes
     )
 
 
-@agent.eval_defn
+@agent.activity_eval_defn
 async def reply_is_brief(evaluation: EvaluatorInput) -> EvaluatorResult:
     """Check that every nonblank reply in the selected turn stays within 40 words."""
     lengths = [
@@ -155,10 +154,10 @@ async def reply_is_brief(evaluation: EvaluatorInput) -> EvaluatorResult:
     )
 
 
-@agent.eval_defn
+@agent.activity_eval_defn
 async def total_input_tokens(evaluation: EvaluatorInput) -> EvaluatorResult:
     """Report cumulative model input tokens through the selected turn."""
-    tokens = evaluation.events.total_usage.input_tokens
+    tokens = evaluation.events.parent_events.total_usage.input_tokens
     if tokens is None:
         return EvaluatorResult(status="skipped", reasoning="Model input token usage is incomplete.")
     return EvaluatorResult(status="completed", value=tokens)
@@ -167,16 +166,9 @@ async def total_input_tokens(evaluation: EvaluatorInput) -> EvaluatorResult:
 @agent.activity_eval_defn
 async def request_type(evaluation: EvaluatorInput) -> EvaluatorResult:
     """Classify the selected request in the context of the conversation so far."""
-    requests = [
-        text
-        for item in evaluation.turn_events.of_type(MessageAccepted).all
-        if isinstance(message := item.event, MessageAccepted)
-        and isinstance(text := message.payload.get("text"), str)
-        and text.strip()
-    ]
+    earlier, requests, _ = _dialogue(evaluation.events.parent_events, evaluation.turn_id)
     if not requests:
         return EvaluatorResult(status="skipped", reasoning="No user request to classify.")
-    earlier, _, _ = _dialogue(evaluation.events, evaluation.turn_id)
     classification = await _judge(
         _REQUEST_TYPE_INSTRUCTIONS,
         {"earlier": earlier, "requests": requests},

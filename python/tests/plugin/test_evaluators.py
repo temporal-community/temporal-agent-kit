@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Sequence
 from datetime import timedelta
@@ -58,6 +59,7 @@ with workflow.unsafe.imports_passed_through():
     from tests.plugin.inline_evaluator_fixture import (
         clear_reply_text,
         crashing_inline_evaluator,
+        inline_reply_length,
         invalid_inline_result,
         reported_inline_error,
         unavailable_inline_evaluator,
@@ -165,7 +167,7 @@ async def test_eval_runner_fails_when_source_type_is_missing_from_mapping():
                 ScriptedAgent.run, AgentConfig(), id="agent", task_queue="eval-routing"
             )
             assert source.result_run_id is not None
-            turn = AgentTurn(workflow_id=source.id, run_id=source.result_run_id, turn_id="turn")
+            turn = AgentTurn(workflow_id=source.id, run_id=source.result_run_id, turn_number=1)
 
             with pytest.raises(WorkflowFailureError) as exc:
                 await client.execute_workflow(
@@ -259,20 +261,23 @@ async def test_hello_judges_receive_the_selected_request_and_earlier_context(mon
             },
         )
 
-    client_class = openai.AsyncOpenAI
-
     def make_client() -> openai.AsyncOpenAI:
-        return client_class(
+        return openai.AsyncOpenAI(
             api_key="test",
             base_url="https://example.invalid/v1",
             http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
         )
 
-    monkeypatch.setattr(openai, "AsyncOpenAI", make_client)
+    monkeypatch.setattr(hello_evals, "AsyncOpenAI", make_client)
 
     trailing = event(3, ToolStartEvent(tool_id="later", tool_name="get_weather", tool_input={}))
+    child_message = event(2, message("Internal subagent request.")).model_copy(
+        update={"agent_id": "hello-child", "turn_id": "child-turn"}
+    )
     first_turn = EvaluatorInput(turn_id="turn-1", events=AgentEvents(first))
-    later_turn = EvaluatorInput(turn_id="turn-2", events=AgentEvents([*first, *second, trailing]))
+    later_turn = EvaluatorInput(
+        turn_id="turn-2", events=AgentEvents([*first, *second, child_message, trailing])
+    )
     assert later_turn.turn_events.all == second
     assert (await hello_evals.full_context_understanding(first_turn)).status == "skipped"
     assert (await hello_evals.request_type(first_turn)).value == "greeting"
@@ -318,6 +323,7 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
         evaluators={
             SCRIPTED_AGENT: [
                 clear_reply_text,
+                inline_reply_length,
                 count_failed_tools,
                 reply_is_brief,
                 total_input_tokens,
@@ -365,15 +371,21 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
             )
             failed = await source.submit_message("run_enqueue", script.model_dump(mode="json"))
             clean = await source.submit_message("run_enqueue", {"steps": []})
+            async with asyncio.timeout(5):
+                while True:
+                    status = await source.get_status()
+                    if status.current_turn == clean.turn_number and not status.turn_active:
+                        break
+                    await asyncio.sleep(0.01)
             first_turn = AgentTurn(
-                workflow_id=handle.id, run_id=handle.result_run_id, turn_id=failed.turn_id
+                workflow_id=handle.id, run_id=handle.result_run_id, turn_number=failed.turn_number
             )
             failed_eval = await client.start_workflow(
                 RunEvaluatorsWorkflow.run, first_turn, id="eval-first", task_queue="evals"
             )
             clean_eval = await client.start_workflow(
                 RunEvaluatorsWorkflow.run,
-                first_turn.model_copy(update={"turn_id": clean.turn_id}),
+                first_turn.model_copy(update={"turn_number": clean.turn_number}),
                 id="eval-second",
                 task_queue="evals",
             )
@@ -388,11 +400,12 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
     assert failed_result.schema_version == 1
     assert failed_result.agent == clean_result.agent == SCRIPTED_AGENT
     assert failed_result.source == first_turn
-    assert clean_result.source.turn_id == clean.turn_id
+    assert clean_result.source.turn_number == clean.turn_number
     assert set(clean_result.results) == {
         "clear_reply_text",
         "count_failed_tools",
         "crashing_inline_evaluator",
+        "inline_reply_length",
         "invalid_inline_result",
         "prior_failed_tools",
         "reply_is_brief",
@@ -403,6 +416,7 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
         "unavailable_judge",
     }
     assert failed_result.results["clear_reply_text"].value == 1
+    assert failed_result.results["inline_reply_length"].value == len(source_text)
     assert failed_result.results["count_failed_tools"].value == 1
     assert clean_result.results["count_failed_tools"].value == 0
     assert clean_result.results["count_failed_tools"].error_kind is None
@@ -470,7 +484,7 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
         and event.activity_type.name != "agentkit.eval.plan"
         and event_id != capture_id
     ]
-    assert len(evaluator_inputs) == 4
+    assert len(evaluator_inputs) == 6
     trajectory_payloads = [capture_payload]
     for events_payload, turn_id_payload in evaluator_inputs:
         assert await client.data_converter.decode([turn_id_payload], [str]) == [clean.turn_id]
@@ -485,7 +499,7 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
             assert not payload.external_payloads
             assert payload.ByteSize() < threshold
         [events] = await client.data_converter.decode([payload], [list[AgentEvent]])
-        assert AgentEvents(events).for_turn(first_turn.turn_id).reply_text == source_text
+        assert AgentEvents(events).for_turn(failed.turn_id).reply_text == source_text
     [plan_id] = [
         event_id
         for event_id, event in scheduled.items()

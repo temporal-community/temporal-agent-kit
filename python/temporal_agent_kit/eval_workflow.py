@@ -89,11 +89,12 @@ class RunEvaluatorsWorkflow:
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=_RETRY,
             )
+            turn_id = events[-1].turn_id
             outcomes = await asyncio.gather(
                 *(
-                    _run_inline_evaluator(spec, events, source.turn_id)
+                    _run_inline_evaluator(spec, events, turn_id)
                     if spec.kind == "inline"
-                    else _run_activity_evaluator(spec, events, source.turn_id)
+                    else _run_activity_evaluator(spec, events, turn_id)
                     for spec in plan.evaluators
                 )
             )

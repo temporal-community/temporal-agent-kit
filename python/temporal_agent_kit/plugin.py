@@ -62,10 +62,13 @@ from temporalio.converter import DataConverter, DefaultPayloadConverter, Externa
 from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig
 
+from temporal_agent_kit.eval_workflow import _suite_evaluators
+from temporal_agent_kit.trajectory_activities import TrajectoryActivities
 from temporal_agent_kit.utils.large_payload import DEFAULT_PAYLOAD_STORAGE
 
 if TYPE_CHECKING:
     from temporal_agent_kit.code_mode.activity_fs import AnyFileSystem
+    from temporal_agent_kit.evaluators import _EvaluatorDefinition
 
 
 def _activity_name(fn: Callable[..., Any]) -> str | None:
@@ -159,6 +162,8 @@ class AgentKitPlugin(SimplePlugin):
       ``tools``.
     * **Filesystem activities** — the ``vfs.<name>.*`` activities of each
       :class:`~temporal_agent_kit.code_mode.ActivityFileSystem` in ``filesystems``.
+    * **Eval suite activities** — the trajectory capture Activity and any Activity-backed
+      evaluators from the worker's ``@agent.eval_suite_defn`` Workflows.
 
     Args:
         tools: The agent's tools. The activity-backed ones get their durable bodies
@@ -198,8 +203,6 @@ class AgentKitPlugin(SimplePlugin):
         def data_converter(converter: DataConverter | None) -> DataConverter:
             return _data_converter(converter, offload=large_payload_offload)
 
-
-
         super().__init__(
             name="AgentKitPlugin",
             data_converter=data_converter,
@@ -222,10 +225,23 @@ class AgentKitPlugin(SimplePlugin):
             SubagentActivities,
         )
 
-        config["activities"] = _merge_activities(
-            config.get("activities"),
-            [SubagentActivities(client).run_subagent_turn],
-        )
+        added: list[Callable[..., Any]] = [SubagentActivities(client).run_subagent_turn]
+        evaluators = [
+            definition
+            for suite in config.get("workflows") or ()
+            for definition in _suite_evaluators(suite)
+        ]
+        if evaluators:
+            added.append(TrajectoryActivities(client).capture_trajectory)
+            bindings: dict[str, _EvaluatorDefinition] = {}
+            for definition in evaluators:
+                if definition.kind != "activity":
+                    continue
+                previous = bindings.setdefault(definition.activity_type, definition)
+                if previous.fn is not definition.fn:
+                    raise ValueError(f"duplicate evaluator Activity {definition.activity_type!r}")
+            added.extend(definition.bind_activity() for definition in bindings.values())
+        config["activities"] = _merge_activities(config.get("activities"), added)
         return config
 
     def _append_activities(

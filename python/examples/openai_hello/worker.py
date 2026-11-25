@@ -3,10 +3,10 @@
 Run from the repo root with:
     uv run --group examples python -m examples.openai_hello.worker
 
-Hosts only the OpenAIHelloAgent workflow. Its one tool (`get_weather`) is an inline workflow
+Hosts OpenAIHelloAgent and its evals. Its one tool (`get_weather`) is an inline workflow
 tool with no worker-side body, so there are no tool activities to register — the OpenAI Agents
 plugin registers the model activities (including the streaming one) itself, and
-`AgentKitPlugin` supplies Agent Kit's data converter and activities.
+`AgentKitPlugin` supplies Agent Kit's data converter, activities, and evaluator registrations.
 
 The plugin is wired for the AGENT KIT STREAMING PATH:
   * ``model_params.stream_to_provider=stream_to_provider`` — resolves each streamed model
@@ -45,6 +45,7 @@ from temporal_agent_kit.ai_sdks.openai_agents import (
 )
 from temporal_agent_kit.utils.task_queue import task_queue_name
 
+from examples.openai_hello.evaluators import OpenAIHelloEvals
 from examples.openai_hello.workflow import TASK_QUEUE, OpenAIHelloAgentWorkflow
 
 
@@ -83,7 +84,7 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[OpenAIHelloAgentWorkflow],
+        workflows=[OpenAIHelloAgentWorkflow, OpenAIHelloEvals],
         # No activities to declare: get_weather is an inline workflow tool, the OpenAI model
         # activities (incl. invoke_model_activity_streaming) come from the OpenAI plugin, and
         # Agent Kit's own activities come from AgentKitPlugin.

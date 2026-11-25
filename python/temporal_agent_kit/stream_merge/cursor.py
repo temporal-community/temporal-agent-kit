@@ -9,9 +9,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from datetime import timedelta
 
 from temporalio.client import Client
+from temporalio.common import RawValue
 from temporalio.contrib.workflow_streams import (
     WorkflowStreamClient,
     WorkflowStreamItem,
@@ -89,13 +91,18 @@ class Cursor:
         mount_index: int,
         from_offset: int,
         skip_until_turn_id: str | None = None,
-    ) -> "Cursor":
-        """Open a subscription to ``workflow_id`` from ``from_offset`` and wrap it as a cursor."""
-        events = WorkflowStreamClient.create(client, workflow_id).subscribe(
-            topics=[TURN_EVENTS_TOPIC],
-            from_offset=from_offset,
-            result_type=AgentEvent,
-            poll_cooldown=_POLL_COOLDOWN,
+        run_id: str | None = None,
+    ) -> Cursor:
+        """Open a subscription from ``from_offset``, optionally pinned to ``run_id``."""
+        events = (
+            WorkflowStreamClient.create(client, workflow_id).subscribe(
+                topics=[TURN_EVENTS_TOPIC],
+                from_offset=from_offset,
+                result_type=AgentEvent,
+                poll_cooldown=_POLL_COOLDOWN,
+            )
+            if run_id is None
+            else cls._subscribe_pinned(client, workflow_id, run_id, from_offset)
         )
         return cls(
             workflow_id=workflow_id,
@@ -104,6 +111,29 @@ class Cursor:
             events=events,
             skip_until_turn_id=skip_until_turn_id,
         )
+
+    @staticmethod
+    async def _subscribe_pinned(
+        client: Client, workflow_id: str, run_id: str, from_offset: int
+    ) -> AsyncIterator[WorkflowStreamItem[AgentEvent]]:
+        # Supplying a client to the stream enables Continue-As-New following. Decode the
+        # items with its configured converter while the stream itself stays on this run.
+        stream = WorkflowStreamClient(client.get_workflow_handle(workflow_id, run_id=run_id))
+        converter = client.data_converter.payload_converter
+        async with aclosing(
+            stream.subscribe(
+                topics=[TURN_EVENTS_TOPIC],
+                from_offset=from_offset,
+                result_type=RawValue,
+                poll_cooldown=_POLL_COOLDOWN,
+            )
+        ) as items:
+            async for item in items:
+                yield WorkflowStreamItem(
+                    topic=item.topic,
+                    data=converter.from_payload(item.data.payload, AgentEvent),
+                    offset=item.offset,
+                )
 
     async def pull(self) -> None:
         """Advance the stream until :attr:`head` holds the next emittable event (or exhaust it).

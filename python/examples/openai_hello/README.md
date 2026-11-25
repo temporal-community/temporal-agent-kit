@@ -25,6 +25,45 @@ streaming activity, to the live turn stream the web UI consumes.
 - **Agent Kit-owned tools.** `get_weather` is a normal `@agent.tool_defn`, adapted onto the SDK
   with `as_openai_agent_tool(...)`, so Agent Kit keeps approval + `tool_start`/`tool_end`.
 
+## Evals authoring reference
+
+[`evaluators.py`](evaluators.py) defines five evaluators that take `EvaluatorInput`.
+The `OpenAIHelloEvals` suite lists the evaluators, and the worker registers the suite
+alongside the agent Workflow.
+The two judge Activities call the OpenAI Responses API directly for structured results.
+
+| Evaluator | Execution | Result |
+| --- | --- | --- |
+| `count_failed_tools` | Activity | Number of failed tool calls on the selected turn, including subagents |
+| `full_context_understanding` | Activity with an OpenAI judge | Pass or fail on the use of relevant earlier context, or skipped when the turn is self-contained |
+| `reply_is_brief` | Activity | Pass or fail against a 40-word limit per reply from the source agent on the selected turn |
+| `total_input_tokens` | Activity | Cumulative model input tokens through the selected turn, or skipped when usage is incomplete |
+| `request_type` | Activity with an OpenAI judge | `greeting`, `weather_request`, `general_question`, or `other` for the selected request |
+
+Try “Hi, I’m in Seattle” followed by “What’s the weather here?” Run the suite after
+each turn to see the request type change from greeting to weather request. The second
+run gives the context judge the earlier message to check against.
+
+Run the suite with a Kit-configured client on the agent worker's task queue. Choose a
+completed turn as the end of the session capture.
+
+```python
+from examples.openai_hello.evaluators import OpenAIHelloEvals
+from temporal_agent_kit import AgentTurn
+
+result = await client.execute_workflow(
+    OpenAIHelloEvals.run,
+    AgentTurn(workflow_id=workflow_id, run_id=run_id, turn_number=turn_number),
+    id=eval_workflow_id,
+    task_queue="openai-hello",
+)
+print(result.results["count_failed_tools"])
+print(result.results["request_type"])
+```
+
+Use the turn number returned when the request was accepted. See the
+[evaluator guide](../../../docs/guides/agent-events.md) for how capture selects a run.
+
 ## Layout
 
 | File | Role |

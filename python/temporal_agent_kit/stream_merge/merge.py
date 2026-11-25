@@ -84,11 +84,13 @@ class _Merge:
         select: SelectPolicy,
         should_stop: ShouldStop,
         stall_grace_seconds: float = DEFAULT_STALL_GRACE_SECONDS,
+        raise_on_read_error: bool = False,
     ) -> None:
         self._client = client
         self._select = select
         self._should_stop = should_stop
         self._stall_grace = stall_grace_seconds
+        self._raise_on_read_error = raise_on_read_error
         self._gates = Gates()
         self._cursors: dict[str, Cursor] = {}
         self._mount_seq = 0
@@ -124,6 +126,7 @@ class _Merge:
         from_offset: int,
         is_child: bool,
         skip_until_turn_id: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Mount a stream as a new cursor (idempotent — a re-used child is mounted once).
 
@@ -151,6 +154,7 @@ class _Merge:
             mount_index=self._mount_seq,
             from_offset=from_offset,
             skip_until_turn_id=skip_until_turn_id,
+            run_id=run_id,
         )
         self._mount_seq += 1
 
@@ -173,6 +177,7 @@ class _Merge:
         self,
         *,
         root_workflow_id: str,
+        root_run_id: str | None,
         root_from_offset: int,
         skip_until_turn_id: str | None,
     ) -> AsyncIterator[MergedItem]:
@@ -181,6 +186,7 @@ class _Merge:
             from_offset=root_from_offset,
             is_child=False,
             skip_until_turn_id=skip_until_turn_id,
+            run_id=root_run_id,
         )
         try:
             async with contextlib.aclosing(self._drive()) as items:
@@ -191,6 +197,9 @@ class _Merge:
 
     async def _drive(self) -> AsyncIterator[MergedItem]:
         while True:
+            if await self._collect_completed_pulls():
+                # Live consumers can reattach if their root stream becomes unreadable.
+                return
             # Drain any synthetic ``subagent_stream_unavailable`` markers queued by a give-up first, so a
             # consumer learns a subagent's detail was dropped right where it happened.
             while self._pending_markers:
@@ -261,14 +270,12 @@ class _Merge:
             ]
             if give_up_now:
                 for workflow_id in give_up_now:
+                    if self._raise_on_read_error and workflow_id in self._cursors:
+                        raise TimeoutError(f"Timed out reading subagent stream {workflow_id!r}")
                     await self._give_up(workflow_id)
                 continue
 
-            pending = [
-                c.pull_task
-                for c in self._cursors.values()
-                if c.pull_task is not None and not c.pull_task.done()
-            ]
+            pending = [c.pull_task for c in self._cursors.values() if c.pull_task is not None]
             if pending:
                 # Wake on the next delivered event OR the EARLIEST child stall deadline (so a child
                 # is given up its own grace after ITS OWN last delivery while blocking — not after
@@ -280,14 +287,7 @@ class _Merge:
                     if self._stall_deadlines
                     else None
                 )
-                done, _ = await asyncio.wait(
-                    pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
-                )
-                if done and await self._collect_completed_pulls():
-                    # The ROOT became unreadable (per-workflow update cap, workflow gone). There is
-                    # no stream left — end gracefully rather than raise out of the generator (which
-                    # would 500 the BFF mid-frame). The consumer can re-attach.
-                    return
+                await asyncio.wait(pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
                 # Whether a pull delivered (re-check candidates) or the deadline elapsed (the
                 # give-up branch fires next iteration), loop back.
                 continue
@@ -315,7 +315,8 @@ class _Merge:
         cap, a completed child, etc.) OR ended cleanly (``exhausted``, its workflow completed) is
         handled GRACEFULLY via :meth:`_give_up`: drop it, release its close gates, and surface a
         marker if it abandoned a turn — so one over-subscribed/terminated subagent never crashes or
-        wedges the merged stream. A failed ROOT is reported so the caller ends the stream cleanly."""
+        wedges the merged stream. A failed ROOT is reported so the caller ends the stream cleanly.
+        When configured to raise read errors, the original exception propagates."""
         departed_children: list[str] = []
         root_died = False
         for c in self._cursors.values():
@@ -329,6 +330,8 @@ class _Merge:
                 raise exc
             if c.error is not None:
                 # pull() captured a read error and marked the cursor exhausted.
+                if self._raise_on_read_error:
+                    raise c.error
                 if c.is_child:
                     departed_children.append(c.workflow_id)
                 else:
@@ -462,6 +465,8 @@ async def merge_stream(
     select: SelectPolicy,
     should_stop: ShouldStop,
     stall_grace_seconds: float = DEFAULT_STALL_GRACE_SECONDS,
+    root_run_id: str | None = None,
+    raise_on_read_error: bool = False,
 ) -> AsyncIterator[MergedItem]:
     """Drive one gated k-way merge, yielding ``(event, resume_offset)`` pairs (see :data:`MergedItem`).
 
@@ -475,23 +480,27 @@ async def merge_stream(
     later ``subagent_reply_received`` is released by the unmounted-stuck give-up; subagents dispatched
     at/after the offset mount and bracket-merge normally. ``select`` decides the order of
     genuinely-concurrent events; ``should_stop`` ends the run after a chosen terminal event. Always
-    honors per-stream offset order and both brackets.
+    honors per-stream offset order and both brackets. ``root_run_id`` pins the root stream to one
+    run of a reused workflow ID. Subagent workflow IDs are unique per parent run, so they need none.
 
     A subagent stream that can't be read (an over-subscribed workflow, a closed run whose history
     has expired) or stalls is given up on — its close gate released so the parent flows, and a
     synthetic ``subagent_stream_unavailable`` marker emitted; the merge never retries (a fresh attach
     recovers). ``stall_grace_seconds`` bounds how long a stalled child may block a buffered parent
-    reply before that give-up (a liveness backstop, not an ordering input)."""
+    reply before that give-up (a liveness backstop, not an ordering input). With
+    ``raise_on_read_error``, stream errors and child read timeouts propagate to the caller."""
     engine = _Merge(
         client=client,
         select=select,
         should_stop=should_stop,
         stall_grace_seconds=stall_grace_seconds,
+        raise_on_read_error=raise_on_read_error,
     )
     # Closing this generator must reach the engine's teardown, which closes every cursor.
     async with contextlib.aclosing(
         engine.run(
             root_workflow_id=root_workflow_id,
+            root_run_id=root_run_id,
             root_from_offset=root_from_offset,
             skip_until_turn_id=skip_until_turn_id,
         )

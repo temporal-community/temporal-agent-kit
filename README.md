@@ -178,6 +178,7 @@ produce a conflict instead of being overwritten. See [coding-agent development](
 | API, sessions, streaming, reconnects | [Agent Kit API](docs/api/README.md) |
 | Tools, approvals, state, and composition | [Capabilities](docs/guides/capabilities.md) |
 | Handler schemas and mid-turn messages | [Messages](docs/guides/messages.md) |
+| Evaluate agent sessions | [Evals](docs/guides/agent-events.md) |
 | Human approval and auto mode | [Approvals](docs/guides/approvals.md) |
 | Code Mode, virtual files, and subagents | [Code Mode](docs/guides/code-mode.md) |
 | Typed application clients | [React / Svelte](docs/guides/client-ui.md) |

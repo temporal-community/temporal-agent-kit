@@ -40,12 +40,12 @@ The two judge Activities call the OpenAI Responses API directly for structured r
 | `total_input_tokens` | Activity | Cumulative model input tokens through the selected turn, or skipped when usage is incomplete |
 | `request_type` | Activity with an OpenAI judge | `greeting`, `weather_request`, `general_question`, or `other` for the selected request |
 
-Try “Hi, I’m in Seattle” followed by “What’s the weather here?” Run evals on both
-turns to see the request type change from greeting to weather request. The second
-turn also gives the context judge a concrete reference to check.
+Try “Hi, I’m in Seattle” followed by “What’s the weather here?” Run the suite after
+each turn to see the request type change from greeting to weather request. The second
+run gives the context judge the earlier message to check against.
 
-After a turn completes, use a Kit-configured client and the agent worker's task queue
-to run its evals:
+Run the suite with a Kit-configured client on the agent worker's task queue. Choose a
+completed turn as the end of the session capture.
 
 ```python
 from examples.openai_hello.evaluators import OpenAIHelloEvals

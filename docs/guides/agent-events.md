@@ -1,10 +1,10 @@
-# Read agent trajectories in evals
+# Evaluate agent sessions
 
-`AgentEvents` wraps native Temporal Agent Kit `AgentEvent` envelopes from one agent tree.
-Pass it the events your evaluator retrieved, in stream order. The same wrapper works with
-a root stream or a merged stream that includes subagents.
+An eval suite evaluates an agent session using the retained events through a completed turn.
+Evaluators receive that history as a read-only `AgentEvents` view over the agent tree's
+native `AgentEvent` envelopes.
 
-## Run an eval suite for a turn
+## Run an eval suite
 
 Import `EvaluatorInput` and `EvaluatorResult` from `temporal_agent_kit`. Declare an async
 evaluator with the signature `(EvaluatorInput) -> EvaluatorResult`.
@@ -37,10 +37,8 @@ the configured size threshold and driver selection to the trajectory and
 scores. Payloads below the threshold stay inline in Workflow history. For offloaded
 payloads, history contains a native claim check and the SDK retrieves the data.
 The capture ends at the requested turn's `TurnEnded` marker. The evaluator input carries the
-requested `turn_id`. Use `evaluation.turn_events` to score that turn and `evaluation.events`
-to inspect the full capture, including earlier retained context. Both are `AgentEvents` views.
-Capture merges retained subagent turns into `evaluation.events`. The merger uses
-dispatch and reply events to keep child turns in order, including nested subagents.
+native `turn_id`, and `evaluation.events` exposes the full capture, including earlier turns.
+The merger uses dispatch and reply events to keep child turns in order, including nested subagents.
 If a retained dispatch or reply points to a child turn whose start or end is missing,
 capture fails with `IncompleteTrajectory`.
 

@@ -89,9 +89,17 @@ class Cursor:
         mount_index: int,
         from_offset: int,
         skip_until_turn_id: str | None = None,
+        run_id: str | None = None,
     ) -> "Cursor":
-        """Open a subscription to ``workflow_id`` from ``from_offset`` and wrap it as a cursor."""
-        events = WorkflowStreamClient.create(client, workflow_id).subscribe(
+        """Open a subscription to ``workflow_id`` from ``from_offset`` and wrap it as a cursor.
+
+        With ``run_id``, the subscription reads that run only."""
+        stream = (
+            WorkflowStreamClient(client.get_workflow_handle(workflow_id, run_id=run_id))
+            if run_id is not None
+            else WorkflowStreamClient.create(client, workflow_id)
+        )
+        events = stream.subscribe(
             topics=[TURN_EVENTS_TOPIC],
             from_offset=from_offset,
             result_type=AgentEvent,

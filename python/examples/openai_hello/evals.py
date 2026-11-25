@@ -1,4 +1,4 @@
-"""Inline checks and Activity-backed judges for OpenAI Hello."""
+"""Inline checks and Activity-backed judges for OpenAI Hello, and the suite that runs them."""
 
 from __future__ import annotations
 
@@ -6,13 +6,16 @@ import json
 from typing import Literal, TypeVar
 
 from pydantic import BaseModel, Field
-from temporal_agent_kit import AgentEvents, EvaluatorInput, EvaluatorResult, agent
-from temporal_agent_kit.agent_protocol import (
-    MessageAccepted,
-    MessageHandlerEnd,
-    ToolErrorEvent,
-    ToolStartEvent,
-)
+from temporalio import workflow
+
+with workflow.unsafe.imports_passed_through():
+    from temporal_agent_kit import ScorerResult, Trajectory, agent
+    from temporal_agent_kit.agent_protocol import (
+        MessageAccepted,
+        MessageHandlerEnd,
+        ToolErrorEvent,
+        ToolStartEvent,
+    )
 
 _REPLY_WORD_LIMIT = 40
 
@@ -71,12 +74,14 @@ async def _judge(
 
 
 def _dialogue(
-    events: AgentEvents, turn_id: str
+    trajectory: Trajectory,
 ) -> tuple[list[dict[str, str]], list[str], list[str]]:
+    """Earlier messages, then the last turn's requests and replies, as plain text."""
     earlier: list[dict[str, str]] = []
     requests: list[str] = []
     replies: list[str] = []
-    for item in events.of_type(MessageAccepted, MessageHandlerEnd).all:
+    turn_number = trajectory.source.turn_number
+    for item in trajectory.events.of_type(MessageAccepted, MessageHandlerEnd).all:
         event = item.event
         if isinstance(event, MessageAccepted):
             role, payload = "user", event.payload
@@ -87,7 +92,7 @@ def _dialogue(
         text = payload.get("text")
         if not isinstance(text, str) or not text.strip():
             continue
-        if item.turn_id != turn_id:
+        if item.turn_number != turn_number:
             earlier.append({"role": role, "text": text})
         elif role == "user":
             requests.append(text)
@@ -96,27 +101,27 @@ def _dialogue(
     return earlier, requests, replies
 
 
-@agent.activity_eval_defn
-async def count_failed_tools(evaluation: EvaluatorInput) -> EvaluatorResult:
-    """Count tool errors in the selected turn."""
-    return EvaluatorResult(
+@agent.activity_eval_scorer_defn
+async def count_failed_tools(trajectory: Trajectory) -> ScorerResult:
+    """Count tool errors in the last turn."""
+    return ScorerResult(
         status="completed",
-        value=len(evaluation.turn_events.of_type(ToolErrorEvent).all),
+        value=len(trajectory.last_turn.of_type(ToolErrorEvent).all),
     )
 
 
-@agent.activity_eval_defn
-async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorResult:
-    """Judge whether the selected turn used the earlier context it depended on."""
-    earlier, requests, replies = _dialogue(evaluation.events, evaluation.turn_id)
+@agent.activity_eval_scorer_defn
+async def full_context_understanding(trajectory: Trajectory) -> ScorerResult:
+    """Judge whether the last turn used the earlier context it depended on."""
+    earlier, requests, replies = _dialogue(trajectory)
     if not any(message["role"] == "user" for message in earlier):
-        return EvaluatorResult(status="skipped", reasoning="No earlier user context.")
+        return ScorerResult(status="skipped", reasoning="No earlier user context.")
     if not requests or not replies:
-        return EvaluatorResult(status="skipped", reasoning="No request and reply pair to judge.")
+        return ScorerResult(status="skipped", reasoning="No request and reply pair to judge.")
 
     tool_calls = [
         {"name": tool.tool_name, "arguments": tool.tool_input}
-        for item in evaluation.turn_events.of_type(ToolStartEvent).all
+        for item in trajectory.last_turn.of_type(ToolStartEvent).all
         if isinstance(tool := item.event, ToolStartEvent)
     ]
     judgment = await _judge(
@@ -125,8 +130,8 @@ async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorRes
         _ContextJudgment,
     )
     if judgment.verdict == "skip":
-        return EvaluatorResult(status="skipped", reasoning=judgment.reason)
-    return EvaluatorResult(
+        return ScorerResult(status="skipped", reasoning=judgment.reason)
+    return ScorerResult(
         status="completed",
         value=int(judgment.verdict == "pass"),
         value_range=(0, 1),
@@ -134,20 +139,20 @@ async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorRes
     )
 
 
-@agent.eval_defn
-async def reply_is_brief(evaluation: EvaluatorInput) -> EvaluatorResult:
-    """Check that every nonblank reply in the selected turn stays within 40 words."""
+@agent.eval_scorer_defn
+async def reply_is_brief(trajectory: Trajectory) -> ScorerResult:
+    """Check that every nonblank reply in the last turn stays within 40 words."""
     lengths = [
         len(text.split())
-        for item in evaluation.turn_events.replies
+        for item in trajectory.last_turn.replies
         if isinstance(reply := item.event, MessageHandlerEnd)
         and isinstance(text := reply.output.get("text"), str)
         and text.strip()
     ]
     if not lengths:
-        return EvaluatorResult(status="skipped", reasoning="No nonblank reply to measure.")
+        return ScorerResult(status="skipped", reasoning="No nonblank reply to measure.")
     longest = max(lengths)
-    return EvaluatorResult(
+    return ScorerResult(
         status="completed",
         value=int(longest <= _REPLY_WORD_LIMIT),
         value_range=(0, 1),
@@ -155,42 +160,37 @@ async def reply_is_brief(evaluation: EvaluatorInput) -> EvaluatorResult:
     )
 
 
-@agent.eval_defn
-async def total_input_tokens(evaluation: EvaluatorInput) -> EvaluatorResult:
-    """Report cumulative model input tokens through the selected turn."""
-    tokens = evaluation.events.total_usage.input_tokens
+@agent.eval_scorer_defn
+async def total_input_tokens(trajectory: Trajectory) -> ScorerResult:
+    """Report cumulative model input tokens across the session."""
+    tokens = trajectory.events.total_usage.input_tokens
     if tokens is None:
-        return EvaluatorResult(status="skipped", reasoning="Model input token usage is incomplete.")
-    return EvaluatorResult(status="completed", value=tokens)
+        return ScorerResult(status="skipped", reasoning="Model input token usage is incomplete.")
+    return ScorerResult(status="completed", value=tokens)
 
 
-@agent.activity_eval_defn
-async def request_type(evaluation: EvaluatorInput) -> EvaluatorResult:
-    """Classify the selected request in the context of the conversation so far."""
-    requests = [
-        text
-        for item in evaluation.turn_events.of_type(MessageAccepted).all
-        if isinstance(message := item.event, MessageAccepted)
-        and isinstance(text := message.payload.get("text"), str)
-        and text.strip()
-    ]
+@agent.activity_eval_scorer_defn
+async def request_type(trajectory: Trajectory) -> ScorerResult:
+    """Classify the last request in the context of the conversation so far."""
+    earlier, requests, _ = _dialogue(trajectory)
     if not requests:
-        return EvaluatorResult(status="skipped", reasoning="No user request to classify.")
-    earlier, _, _ = _dialogue(evaluation.events, evaluation.turn_id)
+        return ScorerResult(status="skipped", reasoning="No user request to classify.")
     classification = await _judge(
         _REQUEST_TYPE_INSTRUCTIONS,
         {"earlier": earlier, "requests": requests},
         _RequestClassification,
     )
-    return EvaluatorResult(
+    return ScorerResult(
         status="completed", value=classification.request_type, reasoning=classification.reason
     )
 
 
-EVALUATORS = [
-    count_failed_tools,
-    full_context_understanding,
-    reply_is_brief,
-    total_input_tokens,
-    request_type,
-]
+@agent.eval_suite_defn(name="OpenAIHelloEvals")
+class OpenAIHelloEvals:
+    scorers = [
+        count_failed_tools,
+        full_context_understanding,
+        reply_is_brief,
+        total_input_tokens,
+        request_type,
+    ]

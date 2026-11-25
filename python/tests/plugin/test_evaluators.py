@@ -228,7 +228,7 @@ async def test_hello_judges_receive_the_selected_request_and_earlier_context(mon
         turn_id="turn-2", events=AgentEvents([*first, *second_tree, trailing, trailing_child])
     )
     assert later_turn.turn_events.all == second_tree
-    assert later_turn.turn_events.parent_events.all == second
+    assert later_turn.turn_events.source_events.all == second
     assert (await hello_evals.full_context_understanding(first_turn)).status == "skipped"
     assert (await hello_evals.request_type(first_turn)).value == "greeting"
     assert (await hello_evals.full_context_understanding(later_turn)).value == 1

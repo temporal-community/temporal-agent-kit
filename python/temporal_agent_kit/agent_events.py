@@ -33,17 +33,17 @@ class AgentEvents:
     which callers should treat as read-only.
 
     Captures start with an event from the source agent. When supplying another
-    sequence, pass ``parent_agent_id`` if its first event belongs to a subagent.
+    sequence, pass ``source_agent_id`` if its first event came from another agent.
     """
 
-    def __init__(self, events: Iterable[AgentEvent], *, parent_agent_id: str | None = None) -> None:
+    def __init__(self, events: Iterable[AgentEvent], *, source_agent_id: str | None = None) -> None:
         self._events = tuple(events)
-        if parent_agent_id is None and self._events:
-            parent_agent_id = self._events[0].agent_id
-        self._parent_agent_id = parent_agent_id
+        if source_agent_id is None and self._events:
+            source_agent_id = self._events[0].agent_id
+        self._source_agent_id = source_agent_id
 
     def _view(self, events: Iterable[AgentEvent]) -> AgentEvents:
-        return AgentEvents(events, parent_agent_id=self._parent_agent_id)
+        return AgentEvents(events, source_agent_id=self._source_agent_id)
 
     @property
     def all(self) -> list[AgentEvent]:
@@ -62,11 +62,11 @@ class AgentEvents:
         return self._view(item for item in self._events if item.agent_id == agent_id)
 
     @property
-    def parent_events(self) -> AgentEvents:
+    def source_events(self) -> AgentEvents:
         """Keep events emitted by the source agent at the root of the capture."""
-        if self._parent_agent_id is None:
+        if self._source_agent_id is None:
             return self
-        return self.for_agent(self._parent_agent_id)
+        return self.for_agent(self._source_agent_id)
 
     def for_turn(self, turn_id: str) -> AgentEvents:
         """Keep the exact turn ID on the envelope. Child turns have their own IDs."""
@@ -76,7 +76,7 @@ class AgentEvents:
         events: list[AgentEvent] = []
         started = False
         for item in self._events:
-            if item.agent_id != self._parent_agent_id:
+            if item.agent_id != self._source_agent_id:
                 if started:
                     events.append(item)
                 continue
@@ -88,7 +88,7 @@ class AgentEvents:
                 started = True
             elif isinstance(item.event, TurnEnded):
                 return self._view(events)
-        return self._view(item for item in events if item.agent_id == self._parent_agent_id)
+        return self._view(item for item in events if item.agent_id == self._source_agent_id)
 
     def for_message(self, message_id: str) -> AgentEvents:
         """Keep events attributed to this exact message ID."""

@@ -43,9 +43,10 @@ If a retained dispatch or reply points to a child turn whose start or end is mis
 capture fails with `IncompleteTrajectory`.
 
 Use `evaluation.turn_events` for the requested turn, including the subagent events merged
-between its start and end. Use `evaluation.turn_events.parent_events` for the source agent's
-events in that turn, or `evaluation.events.parent_events` across the capture. Subagent events
-keep their own agent and turn IDs and can be selected with `evaluation.events.for_agent(subagent_id)`.
+between its start and end. Use `evaluation.turn_events.source_events` for the events emitted
+by the agent whose turn you selected, or `evaluation.events.source_events` for that agent's
+events across the capture. To select another agent in the capture, use
+`evaluation.events.for_agent(subagent_id)`.
 See the [OpenAI Hello evaluators](../../python/examples/openai_hello/evaluators.py).
 
 If your agent uses Continue-As-New, carry its `WorkflowStreamState` and turn numbering into

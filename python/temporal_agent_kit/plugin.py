@@ -68,6 +68,7 @@ from temporal_agent_kit.utils.large_payload import DEFAULT_PAYLOAD_STORAGE
 
 if TYPE_CHECKING:
     from temporal_agent_kit.code_mode.activity_fs import AnyFileSystem
+    from temporal_agent_kit.evaluators import _EvaluatorDefinition
 
 
 def _activity_name(fn: Callable[..., Any]) -> str | None:
@@ -232,7 +233,7 @@ class AgentKitPlugin(SimplePlugin):
         ]
         if evaluators:
             added.append(TrajectoryActivities(client).capture_trajectory)
-            bindings = {}
+            bindings: dict[str, _EvaluatorDefinition] = {}
             for definition in evaluators:
                 if definition.kind != "activity":
                     continue
@@ -247,6 +248,7 @@ class AgentKitPlugin(SimplePlugin):
         self, activities: Sequence[Callable[..., Any]] | None
     ) -> Sequence[Callable[..., Any]]:
         return _merge_activities(activities, self._worker_activities)
+
 
 def _merge_activities(
     existing: Sequence[Callable[..., Any]] | None,

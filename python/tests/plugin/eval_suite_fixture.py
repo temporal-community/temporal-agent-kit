@@ -25,7 +25,7 @@ async def clear_reply_text(evaluation: EvaluatorInput) -> EvaluatorResult:
 @agent.eval_defn
 async def inline_reply_length(evaluation: EvaluatorInput) -> EvaluatorResult:
     assert workflow.unsafe.in_sandbox()
-    reply = evaluation.turn_events.parent_events.reply_text
+    reply = evaluation.turn_events.source_events.reply_text
     return EvaluatorResult(status="completed", value=len(reply or ""))
 
 

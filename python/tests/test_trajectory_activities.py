@@ -176,10 +176,10 @@ async def test_capture_includes_nested_subagent_turns_after_the_parent_closes(wo
 
     events = AgentEvents(merged)
     turn_events = EvaluatorInput(turn_id=accepted.turn_id, events=events).turn_events
-    parent = turn_events.parent_events
-    assert parent.reply_text == "Parent reply."
-    assert parent.all == events.parent_events.for_turn(accepted.turn_id).all
-    dispatches = [item.event for item in parent.all if isinstance(item.event, SubagentMessageSent)]
+    source = turn_events.source_events
+    assert source.reply_text == "Parent reply."
+    assert source.all == events.source_events.for_turn(accepted.turn_id).all
+    dispatches = [item.event for item in source.all if isinstance(item.event, SubagentMessageSent)]
     assert len(dispatches) == 2
     child_id = dispatches[0].subagent_id
     assert [item.turn_number for item in events.for_agent(child_id).of_type(TurnEnded).all] == [
@@ -190,7 +190,7 @@ async def test_capture_includes_nested_subagent_turns_after_the_parent_closes(wo
     ]
     [failure] = turn_events.of_type(ToolErrorEvent).all
     assert failure.agent_id.startswith(f"{child_id}-")
-    assert turn_events.of_type(ToolErrorEvent).parent_events.all == []
+    assert turn_events.of_type(ToolErrorEvent).source_events.all == []
 
 
 async def test_merged_capture_fails_if_a_child_turn_start_is_missing(worker, monkeypatch):
@@ -296,7 +296,7 @@ async def test_capture_retries_after_a_transient_stream_read_error(
 
     assert poll_attempts == {1, 2}
     events = AgentEvents(captured)
-    assert events.parent_events.reply_text == "Parent reply."
+    assert events.source_events.reply_text == "Parent reply."
     assert events.for_agent(child.subagent_id).reply_text == "Child reply."
 
 

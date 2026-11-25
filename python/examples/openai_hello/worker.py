@@ -30,19 +30,23 @@ import os
 import sys
 from datetime import timedelta
 
-from examples.openai_hello.evaluators import OpenAIHelloEvals
-from examples.openai_hello.workflow import TASK_QUEUE, OpenAIHelloAgentWorkflow
-from temporal_agent_kit.ai_sdks.openai_agents import (
-    ModelActivityParameters,
-    OpenAIAgentsPlugin,
-    kit_observer_factory,
-    stream_to_provider,
-)
-from temporal_agent_kit.plugin import AgentKitPlugin
-from temporal_agent_kit.utils.task_queue import task_queue_name
 from temporalio.client import Client
 from temporalio.envconfig import ClientConfig
 from temporalio.worker import Worker
+
+from temporal_agent_kit.plugin import AgentKitPlugin
+from temporal_agent_kit.ai_sdks.openai_agents import (
+    ModelActivityParameters,
+    OpenAIAgentsPlugin,
+)
+from temporal_agent_kit.ai_sdks.openai_agents import (
+    kit_observer_factory,
+    stream_to_provider,
+)
+from temporal_agent_kit.utils.task_queue import task_queue_name
+
+from examples.openai_hello.evaluators import OpenAIHelloEvals
+from examples.openai_hello.workflow import TASK_QUEUE, OpenAIHelloAgentWorkflow
 
 
 async def main() -> None:
@@ -74,8 +78,7 @@ async def main() -> None:
     # matching the web server.
     connect_config = ClientConfig.load_client_connect_config()
     client = await Client.connect(
-        **connect_config,
-        plugins=[plugin, AgentKitPlugin()],
+        **connect_config, plugins=[plugin, AgentKitPlugin()]
     )
 
     worker = Worker(

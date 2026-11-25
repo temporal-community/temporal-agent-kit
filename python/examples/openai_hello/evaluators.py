@@ -110,7 +110,7 @@ async def count_failed_tools(evaluation: EvaluatorInput) -> EvaluatorResult:
 @agent.activity_eval_defn
 async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorResult:
     """Judge whether the selected turn used the earlier context it depended on."""
-    earlier, requests, replies = _dialogue(evaluation.events.parent_events, evaluation.turn_id)
+    earlier, requests, replies = _dialogue(evaluation.events.source_events, evaluation.turn_id)
     if not any(message["role"] == "user" for message in earlier):
         return EvaluatorResult(status="skipped", reasoning="No earlier user context.")
     if not requests or not replies:
@@ -118,7 +118,7 @@ async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorRes
 
     tool_calls = [
         {"name": tool.tool_name, "arguments": tool.tool_input}
-        for item in evaluation.turn_events.parent_events.of_type(ToolStartEvent).all
+        for item in evaluation.turn_events.source_events.of_type(ToolStartEvent).all
         if isinstance(tool := item.event, ToolStartEvent)
     ]
     judgment = await _judge(
@@ -138,10 +138,10 @@ async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorRes
 
 @agent.activity_eval_defn
 async def reply_is_brief(evaluation: EvaluatorInput) -> EvaluatorResult:
-    """Check that every nonblank parent reply in the selected turn stays within 40 words."""
+    """Check that every nonblank source agent reply in the selected turn stays within 40 words."""
     lengths = [
         len(text.split())
-        for item in evaluation.turn_events.parent_events.replies
+        for item in evaluation.turn_events.source_events.replies
         if isinstance(reply := item.event, MessageHandlerEnd)
         and isinstance(text := reply.output.get("text"), str)
         and text.strip()
@@ -160,7 +160,7 @@ async def reply_is_brief(evaluation: EvaluatorInput) -> EvaluatorResult:
 @agent.activity_eval_defn
 async def total_input_tokens(evaluation: EvaluatorInput) -> EvaluatorResult:
     """Report cumulative model input tokens through the selected turn."""
-    tokens = evaluation.events.parent_events.total_usage.input_tokens
+    tokens = evaluation.events.source_events.total_usage.input_tokens
     if tokens is None:
         return EvaluatorResult(status="skipped", reasoning="Model input token usage is incomplete.")
     return EvaluatorResult(status="completed", value=tokens)
@@ -169,7 +169,7 @@ async def total_input_tokens(evaluation: EvaluatorInput) -> EvaluatorResult:
 @agent.activity_eval_defn
 async def request_type(evaluation: EvaluatorInput) -> EvaluatorResult:
     """Classify the selected request in the context of the conversation so far."""
-    earlier, requests, _ = _dialogue(evaluation.events.parent_events, evaluation.turn_id)
+    earlier, requests, _ = _dialogue(evaluation.events.source_events, evaluation.turn_id)
     if not requests:
         return EvaluatorResult(status="skipped", reasoning="No user request to classify.")
     classification = await _judge(

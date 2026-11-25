@@ -65,11 +65,11 @@ def test_views_keep_native_order_and_scope_to_envelope_ids() -> None:
     assert events.all == supplied
     matching = events.of_type(ReplyDelta, TurnStarted)
     assert matching.all == [child_delta, root_start, grandchild_delta, root_delta]
-    assert events.parent_events.all == [root_marker, root_start, root_delta]
-    assert matching.parent_events.all == [root_start, root_delta]
+    assert events.source_events.all == [root_marker, root_start, root_delta]
+    assert matching.source_events.all == [root_start, root_delta]
     assert matching.for_agent(CHILD).all == [child_delta]
-    assert matching.for_agent(CHILD).parent_events.all == []
-    assert AgentEvents([child_delta, root_marker], parent_agent_id=ROOT).parent_events.all == [
+    assert matching.for_agent(CHILD).source_events.all == []
+    assert AgentEvents([child_delta, root_marker], source_agent_id=ROOT).source_events.all == [
         root_marker
     ]
     assert events.for_turn("turn-2").of_type(TurnStarted).all[0] is root_start

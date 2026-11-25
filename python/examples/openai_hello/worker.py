@@ -30,7 +30,7 @@ import os
 import sys
 from datetime import timedelta
 
-from examples.openai_hello.evaluators import EVALUATORS
+from examples.openai_hello.evaluators import OpenAIHelloEvals
 from examples.openai_hello.workflow import TASK_QUEUE, OpenAIHelloAgentWorkflow
 from temporal_agent_kit.ai_sdks.openai_agents import (
     ModelActivityParameters,
@@ -75,13 +75,13 @@ async def main() -> None:
     connect_config = ClientConfig.load_client_connect_config()
     client = await Client.connect(
         **connect_config,
-        plugins=[plugin, AgentKitPlugin(evaluators=EVALUATORS)],
+        plugins=[plugin, AgentKitPlugin()],
     )
 
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[OpenAIHelloAgentWorkflow],
+        workflows=[OpenAIHelloAgentWorkflow, OpenAIHelloEvals],
         # No activities to declare: get_weather is an inline workflow tool, the OpenAI model
         # activities (incl. invoke_model_activity_streaming) come from the OpenAI plugin, and
         # Agent Kit's own activities come from AgentKitPlugin.

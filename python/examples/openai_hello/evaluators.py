@@ -5,16 +5,19 @@ from __future__ import annotations
 import json
 from typing import Literal, TypeVar
 
-from examples.openai_hello.workflow import DEFAULT_MODEL
-from openai import AsyncOpenAI
-from pydantic import BaseModel, Field
-from temporal_agent_kit import AgentEvents, EvaluatorInput, EvaluatorResult, agent
-from temporal_agent_kit.agent_protocol import (
-    MessageAccepted,
-    MessageHandlerEnd,
-    ToolErrorEvent,
-    ToolStartEvent,
-)
+from temporalio import workflow
+
+with workflow.unsafe.imports_passed_through():
+    from examples.openai_hello.workflow import DEFAULT_MODEL
+    from openai import AsyncOpenAI
+    from pydantic import BaseModel, Field
+    from temporal_agent_kit import AgentEvents, EvaluatorInput, EvaluatorResult, agent
+    from temporal_agent_kit.agent_protocol import (
+        MessageAccepted,
+        MessageHandlerEnd,
+        ToolErrorEvent,
+        ToolStartEvent,
+    )
 
 _REPLY_WORD_LIMIT = 40
 
@@ -179,10 +182,12 @@ async def request_type(evaluation: EvaluatorInput) -> EvaluatorResult:
     )
 
 
-EVALUATORS = [
-    count_failed_tools,
-    full_context_understanding,
-    reply_is_brief,
-    total_input_tokens,
-    request_type,
-]
+@agent.eval_suite_defn
+class OpenAIHelloEvals:
+    evaluators = (
+        count_failed_tools,
+        full_context_understanding,
+        reply_is_brief,
+        total_input_tokens,
+        request_type,
+    )

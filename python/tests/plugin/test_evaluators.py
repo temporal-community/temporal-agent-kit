@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
-from datetime import timedelta
 
 import httpx2
 import openai
@@ -12,31 +11,24 @@ from pydantic import ValidationError
 from temporalio import activity, workflow
 from temporalio.api.common.v1 import Payload
 from temporalio.api.sdk.v1.external_storage_pb2 import ExternalStorageReference
-from temporalio.client import WorkflowFailureError
 from temporalio.converter import (
     DataConverter,
     ExternalStorage,
     JSONProtoPayloadConverter,
     PayloadCodec,
 )
-from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 with workflow.unsafe.imports_passed_through():
     from examples.openai_hello import evaluators as hello_evals
-    from examples.openai_hello.evaluators import (
-        count_failed_tools,
-        reply_is_brief,
-        total_input_tokens,
-    )
+    from examples.openai_hello.evaluators import count_failed_tools, total_input_tokens
     from temporal_agent_kit import (
         AgentEvents,
         AgentTurn,
+        EvalSuiteResult,
         EvaluatorInput,
         EvaluatorResult,
-        RunEvaluatorsResult,
-        RunEvaluatorsWorkflow,
         agent,
     )
     from temporal_agent_kit.agent_client import AgentClient
@@ -48,22 +40,14 @@ with workflow.unsafe.imports_passed_through():
         MessageDisposition,
         MessageHandlerEnd,
         TokenUsage,
-        ToolErrorEvent,
         ToolStartEvent,
     )
     from temporal_agent_kit.ai_sdks.openai_agents import OpenAIAgentsPlugin
     from temporal_agent_kit.plugin import AgentKitPlugin
     from temporal_agent_kit.utils.large_payload import LocalFileStorageDriver
     from tests.conformance.script import ModelStep, Script, ToolStep
-    from tests.conformance.scripted_agent import SCRIPTED_AGENT, ScriptedAgent
-    from tests.plugin.inline_evaluator_fixture import (
-        clear_reply_text,
-        crashing_inline_evaluator,
-        inline_reply_length,
-        invalid_inline_result,
-        reported_inline_error,
-        unavailable_inline_evaluator,
-    )
+    from tests.conformance.scripted_agent import ScriptedAgent
+    from tests.plugin.eval_suite_fixture import ScriptedAgentEvals
 
 
 class _WrappingCodec(PayloadCodec):
@@ -76,32 +60,6 @@ class _WrappingCodec(PayloadCodec):
     async def decode(self, payloads: Sequence[Payload]) -> list[Payload]:
         assert all(item.metadata == {"encoding": b"binary/test"} for item in payloads)
         return [Payload.FromString(item.data[::-1]) for item in payloads]
-
-
-@agent.activity_eval_defn()
-async def prior_failed_tools(evaluation: EvaluatorInput) -> EvaluatorResult:
-    events = evaluation.events
-    turn = evaluation.turn_events
-    if len(events.replies) == len(turn.replies):
-        return EvaluatorResult(status="skipped", reasoning="No earlier replies.")
-    all_failures = len(events.of_type(ToolErrorEvent).all)
-    target_failures = len(turn.of_type(ToolErrorEvent).all)
-    return EvaluatorResult(status="completed", value=all_failures - target_failures)
-
-
-@agent.activity_eval_defn
-async def unavailable_judge(evaluation: EvaluatorInput) -> EvaluatorResult:
-    raise ApplicationError("Judge unavailable.", type="JudgeUnavailable", non_retryable=True)
-
-
-@agent.activity_eval_defn
-async def reported_activity_error(evaluation: EvaluatorInput) -> EvaluatorResult:
-    return EvaluatorResult(status="error", reasoning="Could not score in the Activity.")
-
-
-@agent.activity_eval_defn
-async def other_agents_eval(evaluation: EvaluatorInput) -> EvaluatorResult:
-    return EvaluatorResult(status="completed", value=42)
 
 
 @pytest.mark.parametrize(
@@ -141,53 +99,35 @@ def test_evaluator_result_accepts_numeric_values_within_inclusive_range(value):
     assert result.value == value
 
 
-def test_plugin_validates_explicit_evaluator_registration():
+def test_suite_validates_evaluators_at_definition_time():
     async def undecorated(_):
         return 0
 
-    with pytest.raises(TypeError, match="requires @agent.eval_defn or @agent.activity_eval_defn"):
-        AgentKitPlugin(evaluators=[undecorated])
+    with pytest.raises(TypeError, match="accepts only @agent.eval_defn"):
+
+        @agent.eval_suite_defn
+        class Undecorated:
+            evaluators = (undecorated,)
+
     with pytest.raises(ValueError, match="duplicate evaluator name"):
-        AgentKitPlugin(evaluators=[count_failed_tools, count_failed_tools])
 
+        @agent.eval_suite_defn
+        class Duplicated:
+            evaluators = (count_failed_tools, count_failed_tools)
 
-async def test_eval_runner_fails_when_source_type_is_missing_from_mapping():
-    plugin = AgentKitPlugin(
-        evaluators={"ScriptedAgnet": [count_failed_tools], "OtherAgent": [other_agents_eval]}
-    )
-    async with await WorkflowEnvironment.start_local(plugins=[plugin]) as env:
-        client = env.client
-        async with Worker(
-            client,
-            task_queue="eval-routing",
-            workflows=[ScriptedAgent],
-            workflow_runner=UnsandboxedWorkflowRunner(),
-        ):
-            source = await client.start_workflow(
-                ScriptedAgent.run, AgentConfig(), id="agent", task_queue="eval-routing"
-            )
-            assert source.result_run_id is not None
-            turn = AgentTurn(workflow_id=source.id, run_id=source.result_run_id, turn_number=1)
+    with pytest.raises(TypeError, match=r"requires a non-empty Empty\.evaluators"):
 
-            with pytest.raises(WorkflowFailureError) as exc:
-                await client.execute_workflow(
-                    RunEvaluatorsWorkflow.run,
-                    turn,
-                    id="eval",
-                    task_queue="eval-routing",
-                    execution_timeout=timedelta(seconds=10),
-                )
+        @agent.eval_suite_defn
+        class Empty:
+            evaluators = ()
 
-    assert isinstance(exc.value.cause, ActivityError)
-    assert exc.value.cause.activity_type == "agentkit.eval.plan"
-    error = exc.value.cause.cause
-    assert isinstance(error, ApplicationError)
-    assert error.type == "EvaluatorsNotConfigured"
-    assert error.non_retryable
-    assert error.message == (
-        f"No evaluators registered for source Workflow type {SCRIPTED_AGENT!r}. "
-        "Registered Workflow types are 'OtherAgent', 'ScriptedAgnet'."
-    )
+    with pytest.raises(TypeError, match="defines run"):
+
+        @agent.eval_suite_defn
+        class AuthoredRun:
+            evaluators = (count_failed_tools,)
+
+            async def run(self, source: AgentTurn) -> None: ...
 
 
 async def test_hello_judges_receive_the_selected_request_and_earlier_context(monkeypatch):
@@ -306,7 +246,7 @@ async def test_hello_judges_receive_the_selected_request_and_earlier_context(mon
     [(3_000, _WrappingCodec(), True), (1_000_000, None, False)],
     ids=["offloaded-with-codec", "inline"],
 )
-async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_independent(
+async def test_suite_uses_configured_storage_and_keeps_evaluator_outcomes_independent(
     tmp_path, codec, threshold, offloaded
 ):
     unused = LocalFileStorageDriver(tmp_path / "unused")
@@ -319,27 +259,8 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
             payload_size_threshold=threshold,
         ),
     )
-    plugin = AgentKitPlugin(
-        evaluators={
-            SCRIPTED_AGENT: [
-                clear_reply_text,
-                inline_reply_length,
-                count_failed_tools,
-                reply_is_brief,
-                total_input_tokens,
-                unavailable_inline_evaluator,
-                prior_failed_tools,
-                invalid_inline_result,
-                crashing_inline_evaluator,
-                reported_inline_error,
-                unavailable_judge,
-                reported_activity_error,
-            ],
-            "OtherAgent": [other_agents_eval],
-        }
-    )
     async with await WorkflowEnvironment.start_local(
-        plugins=[OpenAIAgentsPlugin(register_activities=False), plugin],
+        plugins=[OpenAIAgentsPlugin(register_activities=False), AgentKitPlugin()],
         data_converter=converter,
     ) as env:
         client = env.client
@@ -355,7 +276,12 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
                 workflows=[ScriptedAgent],
                 workflow_runner=UnsandboxedWorkflowRunner(),
             ),
-            Worker(client, task_queue="evals", activities=[application_capture]),
+            Worker(
+                client,
+                task_queue="evals",
+                workflows=[ScriptedAgentEvals, hello_evals.OpenAIHelloEvals],
+                activities=[application_capture],
+            ),
         ):
             handle = await client.start_workflow(
                 ScriptedAgent.run, AgentConfig(), id="eval-agent", task_queue="eval-source"
@@ -381,10 +307,10 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
                 workflow_id=handle.id, run_id=handle.result_run_id, turn_number=failed.turn_number
             )
             failed_eval = await client.start_workflow(
-                RunEvaluatorsWorkflow.run, first_turn, id="eval-first", task_queue="evals"
+                ScriptedAgentEvals.run, first_turn, id="eval-first", task_queue="evals"
             )
             clean_eval = await client.start_workflow(
-                RunEvaluatorsWorkflow.run,
+                ScriptedAgentEvals.run,
                 first_turn.model_copy(update={"turn_number": clean.turn_number}),
                 id="eval-second",
                 task_queue="evals",
@@ -393,12 +319,11 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
             clean_result = await clean_eval.result()
             history = await clean_eval.fetch_history()
         await Replayer(
-            workflows=[RunEvaluatorsWorkflow], data_converter=client.data_converter
+            workflows=[ScriptedAgentEvals], data_converter=client.data_converter
         ).replay_workflow(history)
 
-    assert isinstance(failed_result, RunEvaluatorsResult)
+    assert isinstance(failed_result, EvalSuiteResult)
     assert failed_result.schema_version == 1
-    assert failed_result.agent == clean_result.agent == SCRIPTED_AGENT
     assert failed_result.source == first_turn
     assert clean_result.source.turn_number == clean.turn_number
     assert set(clean_result.results) == {
@@ -412,7 +337,6 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
         "reported_activity_error",
         "reported_inline_error",
         "total_input_tokens",
-        "unavailable_inline_evaluator",
         "unavailable_judge",
     }
     assert failed_result.results["clear_reply_text"].value == 1
@@ -424,15 +348,6 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
     assert clean_result.results["reply_is_brief"].status == "skipped"
     assert failed_result.results["total_input_tokens"].value == 19
     assert clean_result.results["total_input_tokens"].value == 19
-    missing = clean_result.results["unavailable_inline_evaluator"]
-    assert missing == EvaluatorResult(
-        status="error",
-        error_kind="execution",
-        reasoning=(
-            "RuntimeError: Inline evaluator tests.plugin.inline_evaluator_fixture."
-            "unavailable_inline_evaluator is unavailable"
-        ),
-    )
     invalid = clean_result.results["invalid_inline_result"]
     assert invalid.status == "error"
     assert invalid.value is None
@@ -480,9 +395,7 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
     evaluator_inputs = [
         event.input.payloads
         for event_id, event in scheduled.items()
-        if event.activity_type.name.startswith("agentkit.eval.")
-        and event.activity_type.name != "agentkit.eval.plan"
-        and event_id != capture_id
+        if event_id != capture_id
     ]
     assert len(evaluator_inputs) == 6
     trajectory_payloads = [capture_payload]
@@ -500,15 +413,8 @@ async def test_runner_uses_configured_storage_and_keeps_evaluator_outcomes_indep
             assert payload.ByteSize() < threshold
         [events] = await client.data_converter.decode([payload], [list[AgentEvent]])
         assert AgentEvents(events).for_turn(failed.turn_id).reply_text == source_text
-    [plan_id] = [
-        event_id
-        for event_id, event in scheduled.items()
-        if event.activity_type.name == "agentkit.eval.plan"
-    ]
-    [plan_payload] = activity_results[plan_id].payloads
-    assert not plan_payload.external_payloads
     for event_id, result in activity_results.items():
-        if event_id not in (plan_id, capture_id):
+        if event_id != capture_id:
             [score_payload] = result.payloads
             assert not score_payload.external_payloads
     [completion] = [

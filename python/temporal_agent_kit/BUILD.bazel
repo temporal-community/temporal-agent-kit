@@ -23,7 +23,6 @@ py_library(
     visibility = ["//:__subpackages__"],
     deps = [
         ":eval_workflow",
-        ":evaluators",
         ":subagent_activities",
         ":trajectory_activities",
         "//python/temporal_agent_kit/code_mode:__init__",
@@ -101,6 +100,7 @@ py_library(
     visibility = ["//:__subpackages__"],
     deps = [
         ":agent_workflow",
+        ":eval_workflow",
         ":evaluators",
         ":subagent_toolset",
         "//python/temporal_agent_kit/agent_protocol:__init__",

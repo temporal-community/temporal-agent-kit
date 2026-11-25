@@ -4,30 +4,36 @@
 Pass it the events your evaluator retrieved, in stream order. The same wrapper works with
 a root stream or a merged stream that includes subagents.
 
-## Run evals for a turn
+## Run an eval suite for a turn
 
 Import `EvaluatorInput` and `EvaluatorResult` from `temporal_agent_kit`. Declare an async
-evaluator with the signature `(EvaluatorInput) -> EvaluatorResult` and register it on
-`AgentKitPlugin(evaluators=[...])`. A list applies to every source agent
-evaluated by that worker. Use a mapping keyed by source Workflow type to register
-different evaluators on a shared worker. A source Workflow type missing from the
-mapping fails planning. Use an empty list for a specific type to skip its evals.
+evaluator with the signature `(EvaluatorInput) -> EvaluatorResult`.
 
-- `@agent.eval_defn` runs the evaluator inline as Workflow code inside `RunEvaluatorsWorkflow`.
+- `@agent.eval_defn` runs the evaluator inline as Workflow code inside the eval suite.
   It follows Workflow rules: it must be deterministic, and it does any I/O, such as model
   calls, through Activities it starts. Use it for checks computed from the events alone, or
   for multi-step evals where each step should be retried and recorded separately.
 - `@agent.activity_eval_defn` runs the whole evaluator in one Activity, retried as a unit.
   Use it to call a model or service directly.
 
-Import `RunEvaluatorsWorkflow` and `AgentTurn` from `temporal_agent_kit`. Start
-`RunEvaluatorsWorkflow.run` with an `AgentTurn` containing the source `workflow_id`,
-`run_id`, and `turn_number`. Capture reads the specified run even if the Workflow ID
-has been reused. If the turn hasn't completed, capture fails with `TurnNotCompleted`
-before reading the stream. The Kit selects the source agent's evaluators, captures
-the retained events through that turn once, and uses that capture for both
-kinds of evaluator. When External Storage is configured, the Temporal SDK applies
-the configured size threshold and driver selection to the trajectory, plan, and
+Group evaluators into a suite with `@agent.eval_suite_defn`. Register the suite in the
+worker's `workflows` list with `AgentKitPlugin()` on the client. The plugin registers
+the capture Activity and the suite's Activity-backed evaluators.
+
+```python
+@agent.eval_suite_defn
+class HelloEvals:
+    evaluators = (reply_is_brief, request_type)
+```
+
+The caller selects the suite by starting `HelloEvals.run`. A worker can host several suites,
+and a suite can evaluate turns from several agent types. Pass an `AgentTurn` containing
+the source `workflow_id`, `run_id`, and `turn_number`. Capture reads the specified run
+even if the Workflow ID has been reused. If the turn hasn't completed, capture fails with
+`TurnNotCompleted` before reading the stream. The Kit captures the retained events through that turn
+once, runs the suite's evaluators, and returns an `EvalSuiteResult` with the outcome
+of each evaluator keyed by name. When External Storage is configured, the Temporal SDK applies
+the configured size threshold and driver selection to the trajectory and
 scores. Payloads below the threshold stay inline in Workflow history. For offloaded
 payloads, history contains a native claim check and the SDK retrieves the data.
 The capture ends at the requested turn's `TurnEnded` marker. The evaluator input carries the
@@ -52,8 +58,8 @@ returns an invalid result, or cannot load, the Kit records `error_kind="executio
 and includes the exception type in the reason. Activity failures follow the Activity's
 retry policy before becoming results. The runner still returns the other evaluators' results.
 
-An execution error is final for that eval run. After deploying a fix, start a new
-`RunEvaluatorsWorkflow` for the same `AgentTurn` while the source stream still retains it.
+An execution error is final for that eval run. After deploying a fix, start the suite
+again for the same `AgentTurn` while the source stream still retains it.
 
 ## Inspect a retrieved trajectory
 

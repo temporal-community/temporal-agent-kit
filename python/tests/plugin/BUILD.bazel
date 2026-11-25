@@ -24,7 +24,7 @@ agent_kit_pytest_test(
     srcs = ["test_evaluators.py"],
     imports = ["../.."],
     deps = [
-        ":inline_evaluator_fixture",
+        ":eval_suite_fixture",
         "//python/examples/openai_hello:evaluators",
         "//python/temporal_agent_kit:__init__",
         "//python/temporal_agent_kit:agent",
@@ -45,11 +45,12 @@ agent_kit_pytest_test(
 )
 
 py_library(
-    name = "inline_evaluator_fixture",
-    srcs = ["inline_evaluator_fixture.py"],
+    name = "eval_suite_fixture",
+    srcs = ["eval_suite_fixture.py"],
     imports = ["../.."],
     visibility = ["//python:__subpackages__"],
     deps = [
+        "//python/examples/openai_hello:evaluators",
         "//python/temporal_agent_kit:__init__",
         "//python/temporal_agent_kit:agent",
         "//python/temporal_agent_kit/agent_protocol:__init__",

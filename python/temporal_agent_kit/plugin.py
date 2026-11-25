@@ -54,7 +54,7 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from temporalio.contrib.pydantic import PydanticPayloadConverter
@@ -62,8 +62,7 @@ from temporalio.converter import DataConverter, DefaultPayloadConverter, Externa
 from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig
 
-from temporal_agent_kit.eval_workflow import RunEvaluatorsWorkflow, _EvalRegistry
-from temporal_agent_kit.evaluators import Evaluator, _registered_evaluators
+from temporal_agent_kit.eval_workflow import _suite_evaluators
 from temporal_agent_kit.trajectory_activities import TrajectoryActivities
 from temporal_agent_kit.utils.large_payload import DEFAULT_PAYLOAD_STORAGE
 
@@ -162,8 +161,8 @@ class AgentKitPlugin(SimplePlugin):
       ``tools``.
     * **Filesystem activities** — the ``vfs.<name>.*`` activities of each
       :class:`~temporal_agent_kit.code_mode.ActivityFileSystem` in ``filesystems``.
-    * **Evals** — ``RunEvaluatorsWorkflow``, the trajectory capture Activity, and
-      dispatch for inline and Activity evaluators.
+    * **Eval suite activities** — the trajectory capture Activity and any Activity-backed
+      evaluators from the worker's ``@agent.eval_suite_defn`` Workflows.
 
     Args:
         tools: The agent's tools. The activity-backed ones get their durable bodies
@@ -172,10 +171,6 @@ class AgentKitPlugin(SimplePlugin):
         filesystems: The ``ActivityFileSystem`` subclasses the worker's agents mount. Register
             them on every worker of the agents' task queues: a mount runs its operations, and
             the console reads its files, on the workflow's task queue.
-        evaluators: Functions declared with ``@agent.eval_defn`` or
-            ``@agent.activity_eval_defn``. A sequence applies to every source agent
-            on this eval worker. To configure different
-            evaluators per agent, pass a mapping keyed by source Workflow type.
         large_payload_offload: Where the data converter offloads oversized payloads —
             large tool results routinely exceed Temporal's ~2 MB
             limit. Defaults to :func:`~temporal_agent_kit.utils.large_payload.local_payload_storage`,
@@ -192,7 +187,6 @@ class AgentKitPlugin(SimplePlugin):
         *,
         tools: Sequence[Callable[..., Any]] = (),
         filesystems: Sequence[type[AnyFileSystem]] = (),
-        evaluators: Sequence[Evaluator] | Mapping[str, Sequence[Evaluator]] = (),
         # Defaulting to the shared local storage rather than to ``None`` keeps ``None`` free
         # to mean the one other thing a caller might want: no offloading at all.
         large_payload_offload: ExternalStorage | None = DEFAULT_PAYLOAD_STORAGE,
@@ -204,21 +198,6 @@ class AgentKitPlugin(SimplePlugin):
             *_tool_activities(tools),
             *_filesystem_activities(filesystems),
         ]
-        if isinstance(evaluators, Mapping):
-            groups = {name: _registered_evaluators(group) for name, group in evaluators.items()}
-            self._eval_default = []
-            self._eval_by_agent = {name: [entry.spec for entry in group] for name, group in groups.items()}
-            bindings = {}
-            for group in groups.values():
-                for entry in group:
-                    previous = bindings.setdefault(entry.spec, entry)
-                    if previous.fn is not entry.fn:
-                        raise ValueError(f"duplicate evaluator definition {entry.spec.name!r}")
-            self._evaluators = list(bindings.values())
-        else:
-            self._evaluators = _registered_evaluators(evaluators)
-            self._eval_default = [entry.spec for entry in self._evaluators]
-            self._eval_by_agent = {}
 
         def data_converter(converter: DataConverter | None) -> DataConverter:
             return _data_converter(converter, offload=large_payload_offload)
@@ -227,7 +206,6 @@ class AgentKitPlugin(SimplePlugin):
             name="AgentKitPlugin",
             data_converter=data_converter,
             activities=self._append_activities,
-            workflows=self._append_eval_workflow if self._evaluators else None,
         )
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
@@ -247,15 +225,21 @@ class AgentKitPlugin(SimplePlugin):
         )
 
         added: list[Callable[..., Any]] = [SubagentActivities(client).run_subagent_turn]
-        if self._evaluators:
-            trajectories = TrajectoryActivities(client)
-            added.append(_EvalRegistry(client, self._eval_default, self._eval_by_agent).plan)
-            added.append(trajectories.capture_trajectory)
-            added.extend(
-                definition.bind_activity()
-                for definition in self._evaluators
-                if definition.spec.kind == "activity"
-            )
+        evaluators = [
+            definition
+            for suite in config.get("workflows") or ()
+            for definition in _suite_evaluators(suite)
+        ]
+        if evaluators:
+            added.append(TrajectoryActivities(client).capture_trajectory)
+            bindings = {}
+            for definition in evaluators:
+                if definition.kind != "activity":
+                    continue
+                previous = bindings.setdefault(definition.activity_type, definition)
+                if previous.fn is not definition.fn:
+                    raise ValueError(f"duplicate evaluator Activity {definition.activity_type!r}")
+            added.extend(definition.bind_activity() for definition in bindings.values())
         config["activities"] = _merge_activities(config.get("activities"), added)
         return config
 
@@ -263,13 +247,6 @@ class AgentKitPlugin(SimplePlugin):
         self, activities: Sequence[Callable[..., Any]] | None
     ) -> Sequence[Callable[..., Any]]:
         return _merge_activities(activities, self._worker_activities)
-
-    def _append_eval_workflow(self, workflows: Sequence[type] | None) -> list[type]:
-        registered = list(workflows or ())
-        if RunEvaluatorsWorkflow not in registered:
-            registered.append(RunEvaluatorsWorkflow)
-        return registered
-
 
 def _merge_activities(
     existing: Sequence[Callable[..., Any]] | None,

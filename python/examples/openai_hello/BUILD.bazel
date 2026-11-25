@@ -70,5 +70,6 @@ py_library(
         "//python/temporal_agent_kit/agent_protocol:__init__",
         "@pypi//openai",
         "@pypi//pydantic",
+        "@pypi//temporalio",
     ],
 )

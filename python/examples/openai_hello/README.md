@@ -28,7 +28,8 @@ streaming activity, to the live turn stream the web UI consumes.
 ## Evals authoring reference
 
 [`evaluators.py`](evaluators.py) defines five evaluators that take `EvaluatorInput`.
-The worker registers them with `AgentKitPlugin(evaluators=EVALUATORS)`.
+The `OpenAIHelloEvals` suite lists the evaluators, and the worker registers the suite
+alongside the agent Workflow.
 The two judge Activities call the OpenAI Responses API directly for structured results.
 
 | Evaluator | Execution | Result |
@@ -47,10 +48,11 @@ After a turn completes, use a Kit-configured client and the agent worker's task 
 to run its evals:
 
 ```python
-from temporal_agent_kit import AgentTurn, RunEvaluatorsWorkflow
+from examples.openai_hello.evaluators import OpenAIHelloEvals
+from temporal_agent_kit import AgentTurn
 
 result = await client.execute_workflow(
-    RunEvaluatorsWorkflow.run,
+    OpenAIHelloEvals.run,
     AgentTurn(workflow_id=workflow_id, run_id=run_id, turn_number=turn_number),
     id=eval_workflow_id,
     task_queue="openai-hello",

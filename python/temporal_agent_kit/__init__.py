@@ -2,8 +2,8 @@
 
 Agent authors import the core API from here: ``agent`` (the ``@agent.defn`` / ``@agent.accepts``
 / tool decorators) and the workflow-side runtime (``AgentWorkflowRunner``). Evaluators
-take ``EvaluatorInput`` and return ``EvaluatorResult``. To run them, pass an ``AgentTurn`` to
-``RunEvaluatorsWorkflow`` and read the outcomes from ``RunEvaluatorsResult``.
+take ``EvaluatorInput`` and return ``EvaluatorResult``. Use ``@agent.eval_suite_defn`` to
+group them into a Workflow that accepts an ``AgentTurn`` and returns an ``EvalSuiteResult``.
 
 Further modules:
 
@@ -22,7 +22,7 @@ from temporal_agent_kit.agent_workflow import (
     AgentToolContext,
     AgentWorkflowRunner,
 )
-from temporal_agent_kit.eval_workflow import RunEvaluatorsResult, RunEvaluatorsWorkflow
+from temporal_agent_kit.eval_workflow import EvalSuiteResult
 from temporal_agent_kit.evaluators import EvaluatorInput, EvaluatorResult
 from temporal_agent_kit.trajectory_activities import AgentTurn
 
@@ -31,9 +31,8 @@ __all__ = [
     "AgentToolContext",
     "AgentTurn",
     "AgentWorkflowRunner",
+    "EvalSuiteResult",
     "EvaluatorInput",
     "EvaluatorResult",
-    "RunEvaluatorsResult",
-    "RunEvaluatorsWorkflow",
     "agent",
 ]

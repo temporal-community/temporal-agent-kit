@@ -119,6 +119,7 @@ from temporal_agent_kit.code_mode import (
     okf_code_mode_tool,
     vfs_mount,
 )
+from temporal_agent_kit.eval_workflow import eval_suite_defn
 from temporal_agent_kit.evaluators import activity_eval_defn, eval_defn
 from temporal_agent_kit.state.decl import StateDecl, state
 from temporal_agent_kit.subagent_toolset import (
@@ -157,6 +158,7 @@ __all__ = [
     "VFSMount",
     "defn",
     "eval_defn",
+    "eval_suite_defn",
     "init",
     "StateDecl",
     "SubagentToolPolicy",

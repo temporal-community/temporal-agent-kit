@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, get_type_hints, overload
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
-from temporalio import activity, workflow
+from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from temporal_agent_kit.agent_events import AgentEvents
@@ -67,27 +67,28 @@ class EvaluatorResult(BaseModel):
 
 Evaluator = Callable[[EvaluatorInput], Awaitable[EvaluatorResult]]
 _EvaluatorKind = Literal["inline", "activity"]
-
-
-class _EvaluatorSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    module: str
-    kind: _EvaluatorKind
-
-    @property
-    def activity_type(self) -> str:
-        return f"agentkit.eval.{self.module}.{self.name}"
+_EVALUATOR_ATTR = "__agent_evaluator__"
 
 
 @dataclass(frozen=True)
 class _EvaluatorDefinition:
-    spec: _EvaluatorSpec
+    kind: _EvaluatorKind
     fn: Evaluator
 
+    @property
+    def name(self) -> str:
+        return self.fn.__name__
+
+    @property
+    def activity_type(self) -> str:
+        module = self.fn.__module__
+        # Temporal loads an entry script under this name inside the Workflow sandbox.
+        if module == "__temporal_main__":
+            module = "__main__"
+        return f"agentkit.eval.{module}.{self.fn.__qualname__}"
+
     def bind_activity(self) -> Callable[[list[AgentEvent], str], Awaitable[EvaluatorResult]]:
-        @activity.defn(name=self.spec.activity_type)
+        @activity.defn(name=self.activity_type)
         async def run(events: list[AgentEvent], turn_id: str) -> EvaluatorResult:
             return await self.evaluate(EvaluatorInput(turn_id=turn_id, events=AgentEvents(events)))
 
@@ -119,7 +120,7 @@ def eval_defn() -> Callable[[Evaluator], Evaluator]: ...
 
 
 def eval_defn(fn: Evaluator | None = None, /) -> Evaluator | Callable[[Evaluator], Evaluator]:
-    """Define a module-level async evaluator that runs inline in RunEvaluatorsWorkflow."""
+    """Define an async evaluator that runs inline as deterministic eval suite Workflow code."""
     return _define_evaluator(fn, kind="inline")
 
 
@@ -144,7 +145,7 @@ def _define_evaluator(
     decorator = "@agent.eval_defn" if kind == "inline" else "@agent.activity_eval_defn"
 
     def decorate(evaluator: Evaluator) -> Evaluator:
-        if hasattr(evaluator, "__agent_evaluator__"):
+        if hasattr(evaluator, _EVALUATOR_ATTR):
             raise TypeError(f"{decorator} requires a function with only one evaluator decorator")
         parameters = tuple(inspect.signature(evaluator).parameters.values())
         if (
@@ -163,45 +164,7 @@ def _define_evaluator(
         ):
             raise TypeError(f"{decorator} requires (EvaluatorInput) -> EvaluatorResult")
 
-        if kind == "inline" and evaluator.__qualname__ != evaluator.__name__:
-            raise TypeError(f"{decorator} requires a module-level function")
-        spec = _EvaluatorSpec(
-            name=evaluator.__name__,
-            module=evaluator.__module__,
-            kind=kind,
-        )
-        vars(evaluator)["__agent_evaluator__"] = _EvaluatorDefinition(spec, evaluator)
+        vars(evaluator)[_EVALUATOR_ATTR] = _EvaluatorDefinition(kind, evaluator)
         return evaluator
 
     return decorate(fn) if fn is not None else decorate
-
-
-def _registered_evaluators(evaluators: Sequence[Evaluator]) -> list[_EvaluatorDefinition]:
-    definitions: list[_EvaluatorDefinition] = []
-    seen: set[str] = set()
-    for evaluator in evaluators:
-        definition = getattr(evaluator, "__agent_evaluator__", None)
-        if not isinstance(definition, _EvaluatorDefinition):
-            raise TypeError(
-                "AgentKitPlugin(evaluators=...) requires @agent.eval_defn or @agent.activity_eval_defn"
-            )
-        if definition.spec.name in seen:
-            raise ValueError(f"duplicate evaluator name {definition.spec.name!r}")
-        seen.add(definition.spec.name)
-        definitions.append(definition)
-    return definitions
-
-
-def _load_inline_evaluator(spec: _EvaluatorSpec) -> _EvaluatorDefinition:
-    module_name = spec.module
-    if module_name == "__main__" and workflow.unsafe.in_sandbox():
-        module_name = "__temporal_main__"
-    # Evaluator modules are selected by the recorded plan and loaded under sandbox restrictions.
-    module = __import__(module_name, fromlist=[spec.name])
-    definition = getattr(getattr(module, spec.name, None), "__agent_evaluator__", None)
-    # A module may import the decorator through the sandbox's passthrough mechanism.
-    expected = spec.model_dump()
-    expected["module"] = module_name
-    if definition is None or definition.spec.model_dump() != expected:
-        raise RuntimeError(f"Inline evaluator {spec.module}.{spec.name} is unavailable")
-    return definition

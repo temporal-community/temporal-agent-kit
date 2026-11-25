@@ -100,7 +100,7 @@ def _dialogue(
 
 @agent.activity_eval_defn
 async def count_failed_tools(evaluation: EvaluatorInput) -> EvaluatorResult:
-    """Count tool errors in the selected turn."""
+    """Count tool errors in the selected turn across the agent tree."""
     return EvaluatorResult(
         status="completed",
         value=len(evaluation.turn_events.of_type(ToolErrorEvent).all),
@@ -118,7 +118,7 @@ async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorRes
 
     tool_calls = [
         {"name": tool.tool_name, "arguments": tool.tool_input}
-        for item in evaluation.turn_events.of_type(ToolStartEvent).all
+        for item in evaluation.turn_events.parent_events.of_type(ToolStartEvent).all
         if isinstance(tool := item.event, ToolStartEvent)
     ]
     judgment = await _judge(
@@ -138,10 +138,10 @@ async def full_context_understanding(evaluation: EvaluatorInput) -> EvaluatorRes
 
 @agent.activity_eval_defn
 async def reply_is_brief(evaluation: EvaluatorInput) -> EvaluatorResult:
-    """Check that every nonblank reply in the selected turn stays within 40 words."""
+    """Check that every nonblank parent reply in the selected turn stays within 40 words."""
     lengths = [
         len(text.split())
-        for item in evaluation.turn_events.replies
+        for item in evaluation.turn_events.parent_events.replies
         if isinstance(reply := item.event, MessageHandlerEnd)
         and isinstance(text := reply.output.get("text"), str)
         and text.strip()

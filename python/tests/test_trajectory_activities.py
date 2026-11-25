@@ -5,7 +5,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from temporal_agent_kit import AgentEvents, trajectory_activities
+from temporal_agent_kit import AgentEvents, EvaluatorInput, trajectory_activities
 from temporal_agent_kit.agent_client import AgentClient
 from temporal_agent_kit.agent_protocol import (
     AgentConfig,
@@ -134,6 +134,18 @@ async def test_capture_includes_nested_subagent_turns_after_the_parent_closes(wo
         ScriptedAgent.run, AgentConfig(), id="agent", task_queue="trajectory-tests"
     )
     assert handle.result_run_id is not None
+    agent = AgentClient(client, handle.id)
+    earlier_script = Script(
+        steps=[
+            SubagentStartStep(name="child"),
+            SubagentSendStep(
+                name="child", script=Script(steps=[ModelStep(reply=["Earlier child reply."])])
+            ),
+        ]
+    )
+    earlier = await agent.submit_message("run_enqueue", earlier_script.model_dump(mode="json"))
+    await _wait_for_completed_turn(agent, earlier.turn_number)
+
     child_script = Script(steps=[ModelStep(reply=["Child reply."])])
     nested_script = Script(
         steps=[
@@ -146,13 +158,11 @@ async def test_capture_includes_nested_subagent_turns_after_the_parent_closes(wo
     )
     script = Script(
         steps=[
-            SubagentStartStep(name="child"),
             SubagentSendStep(name="child", script=child_script),
             SubagentSendStep(name="child", script=nested_script),
             ModelStep(reply=["Parent reply."]),
         ]
     )
-    agent = AgentClient(client, handle.id)
     accepted = await agent.submit_message("run_enqueue", script.model_dump(mode="json"))
     turn = AgentTurn(
         workflow_id=handle.id, run_id=handle.result_run_id, turn_number=accepted.turn_number
@@ -164,15 +174,22 @@ async def test_capture_includes_nested_subagent_turns_after_the_parent_closes(wo
     )
 
     events = AgentEvents(merged)
-    parent = events.parent_events
-    assert parent.for_turn(accepted.turn_id).reply_text == "Parent reply."
+    turn_events = EvaluatorInput(turn_id=accepted.turn_id, events=events).turn_events
+    parent = turn_events.parent_events
+    assert parent.reply_text == "Parent reply."
+    assert parent.all == events.parent_events.for_turn(accepted.turn_id).all
     dispatches = [item.event for item in parent.all if isinstance(item.event, SubagentMessageSent)]
     assert len(dispatches) == 2
-    child = events.for_agent(dispatches[0].subagent_id)
-    assert [item.turn_number for item in child.of_type(TurnEnded).all] == [1, 2]
-    [failure] = events.of_type(ToolErrorEvent).all
-    assert failure.agent_id.startswith(f"{dispatches[0].subagent_id}-")
-    assert events.of_type(ToolErrorEvent).parent_events.all == []
+    child_id = dispatches[0].subagent_id
+    assert [item.turn_number for item in events.for_agent(child_id).of_type(TurnEnded).all] == [
+        1, 2, 3
+    ]
+    assert [item.turn_number for item in turn_events.for_agent(child_id).of_type(TurnEnded).all] == [
+        2, 3
+    ]
+    [failure] = turn_events.of_type(ToolErrorEvent).all
+    assert failure.agent_id.startswith(f"{child_id}-")
+    assert turn_events.of_type(ToolErrorEvent).parent_events.all == []
 
 
 async def test_merged_capture_fails_if_a_child_turn_start_is_missing(worker, monkeypatch):

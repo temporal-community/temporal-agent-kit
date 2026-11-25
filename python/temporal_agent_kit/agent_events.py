@@ -17,6 +17,8 @@ from temporal_agent_kit.agent_protocol.events import (
     StreamEvent,
     TokenUsage,
     ToolErrorEvent,
+    TurnEnded,
+    TurnStarted,
 )
 
 __all__ = ["AgentEvents"]
@@ -69,6 +71,24 @@ class AgentEvents:
     def for_turn(self, turn_id: str) -> AgentEvents:
         """Keep the exact turn ID on the envelope. Child turns have their own IDs."""
         return self._view(item for item in self._events if item.turn_id == turn_id)
+
+    def _for_turn_tree(self, turn_id: str) -> AgentEvents:
+        events: list[AgentEvent] = []
+        started = False
+        for item in self._events:
+            if item.agent_id != self._parent_agent_id:
+                if started:
+                    events.append(item)
+                continue
+            if item.turn_id != turn_id:
+                continue
+            events.append(item)
+            # Queued messages can be admitted before this turn starts.
+            if isinstance(item.event, TurnStarted):
+                started = True
+            elif isinstance(item.event, TurnEnded):
+                return self._view(events)
+        return self._view(item for item in events if item.agent_id == self._parent_agent_id)
 
     def for_message(self, message_id: str) -> AgentEvents:
         """Keep events attributed to this exact message ID."""

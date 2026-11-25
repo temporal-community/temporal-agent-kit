@@ -34,9 +34,9 @@ The two judge Activities call the OpenAI Responses API directly for structured r
 
 | Evaluator | Execution | Result |
 | --- | --- | --- |
-| `count_failed_tools` | Activity | Number of failed tool calls on the selected turn |
+| `count_failed_tools` | Activity | Number of failed tool calls on the selected turn, including subagents |
 | `full_context_understanding` | Activity with an OpenAI judge | Pass or fail on the use of relevant earlier context, or skipped when the turn is self-contained |
-| `reply_is_brief` | Activity | Pass or fail against a 40-word limit per reply on the selected turn |
+| `reply_is_brief` | Activity | Pass or fail against a 40-word limit per parent reply on the selected turn |
 | `total_input_tokens` | Activity | Cumulative model input tokens through the selected turn, or skipped when usage is incomplete |
 | `request_type` | Activity with an OpenAI judge | `greeting`, `weather_request`, `general_question`, or `other` for the selected request |
 

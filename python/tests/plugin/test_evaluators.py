@@ -41,6 +41,8 @@ with workflow.unsafe.imports_passed_through():
         MessageHandlerEnd,
         TokenUsage,
         ToolStartEvent,
+        TurnEnded,
+        TurnStarted,
     )
     from temporal_agent_kit.ai_sdks.openai_agents import OpenAIAgentsPlugin
     from temporal_agent_kit.plugin import AgentKitPlugin
@@ -152,10 +154,12 @@ async def test_hello_judges_receive_the_selected_request_and_earlier_context(mon
     ]
     second = [
         event(2, message("What's the weather here?")),
+        event(2, TurnStarted()),
         event(2, ToolStartEvent(
             tool_id="weather", tool_name="get_weather", tool_input={"city": "Seattle"}
         )),
         event(2, MessageHandlerEnd(output={"text": "It's 72°F and sunny in Seattle."})),
+        event(2, TurnEnded()),
     ]
     judged = []
     formats = []
@@ -214,11 +218,17 @@ async def test_hello_judges_receive_the_selected_request_and_earlier_context(mon
     child_message = event(2, message("Internal subagent request.")).model_copy(
         update={"agent_id": "hello-child", "turn_id": "child-turn"}
     )
+    child_tool = child_message.model_copy(
+        update={"event": ToolStartEvent(tool_id="child", tool_name="internal", tool_input={})}
+    )
+    trailing_child = child_message.model_copy(update={"turn_id": "later-child-turn"})
+    second_tree = [*second[:2], child_message, child_tool, *second[2:]]
     first_turn = EvaluatorInput(turn_id="turn-1", events=AgentEvents(first))
     later_turn = EvaluatorInput(
-        turn_id="turn-2", events=AgentEvents([*first, *second, child_message, trailing])
+        turn_id="turn-2", events=AgentEvents([*first, *second_tree, trailing, trailing_child])
     )
-    assert later_turn.turn_events.all == second
+    assert later_turn.turn_events.all == second_tree
+    assert later_turn.turn_events.parent_events.all == second
     assert (await hello_evals.full_context_understanding(first_turn)).status == "skipped"
     assert (await hello_evals.request_type(first_turn)).value == "greeting"
     assert (await hello_evals.full_context_understanding(later_turn)).value == 1

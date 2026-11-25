@@ -26,8 +26,8 @@ class EvaluatorInput:
 
     @property
     def turn_events(self) -> AgentEvents:
-        """Events for the requested turn only."""
-        return self.events.for_turn(self.turn_id)
+        """Events for the requested turn, including its subagents in merged order."""
+        return self.events._for_turn_tree(self.turn_id)
 
 
 class EvaluatorResult(BaseModel):

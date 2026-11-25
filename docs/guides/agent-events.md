@@ -44,9 +44,10 @@ dispatch and reply events to keep child turns in order, including nested subagen
 If a retained dispatch or reply points to a child turn whose start or end is missing,
 capture fails with `IncompleteTrajectory`.
 
-Use `evaluation.events.parent_events` for the source agent's events across the capture.
-`evaluation.turn_events` selects the requested `turn_id`. Subagent events keep their own
-agent and turn IDs and can be selected with `evaluation.events.for_agent(subagent_id)`.
+Use `evaluation.turn_events` for the requested turn, including the subagent events merged
+between its start and end. Use `evaluation.turn_events.parent_events` for the source agent's
+events in that turn, or `evaluation.events.parent_events` across the capture. Subagent events
+keep their own agent and turn IDs and can be selected with `evaluation.events.for_agent(subagent_id)`.
 See the [OpenAI Hello evaluators](../../python/examples/openai_hello/evaluators.py).
 
 If your agent uses Continue-As-New, carry its `WorkflowStreamState` and turn numbering into

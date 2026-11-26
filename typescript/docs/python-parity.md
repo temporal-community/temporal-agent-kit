@@ -27,6 +27,7 @@ Paths are under `python/temporal_agent_kit/`, `typescript/packages/core/src/` (c
 | `code_mode/{driver,tool,stubs,vfs,okf,okf_tool,mount_decl,activity_fs}.py` | core `code-mode/` at the same names, with `base64.ts` (the workflow sandbox has no `Buffer`); the activity side of `activity_fs` and `okf` in worker `code-mode/` |
 | `code_mode/monty_stepper.py` | worker `code-mode/monty-stepper.ts` |
 | `code_mode/_texts.py` | core `code-mode/texts.ts`; both generated from `contract/code_mode/` |
+| `code_mode/git_fs.py` | Not ported yet |
 | — | core `py-repr.ts`: Python's `repr()`, which Code Mode shows the model |
 | `plugin.py` | worker `plugin.ts` |
 | `utils/large_payload.py` | worker `utils/large-payload.ts`, `utils/s3.ts` |

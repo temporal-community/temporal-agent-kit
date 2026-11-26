@@ -25,11 +25,13 @@ configuration, which is where credentials for a private repository belong.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import hashlib
 import os
 import re
 import shutil
+import signal
 import tempfile
 import time
 from collections.abc import Mapping
@@ -46,6 +48,8 @@ _REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 _KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _LAST_FETCH = "agent-kit-last-fetch"
+_KILL_GROUP = hasattr(os, "killpg")
+_STOP_GRACE = timedelta(seconds=2)
 
 # One fetch or clone of a repository at a time in this process.
 _locks: dict[Path, asyncio.Lock] = {}
@@ -79,11 +83,37 @@ async def _git(*args: str, cwd: Path | None = None) -> bytes:
         stderr=asyncio.subprocess.PIPE,
         # git must fail on a missing credential, not wait for someone to type one.
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        # Its own process group, so that a cancel also stops the helpers git starts.
+        start_new_session=_KILL_GROUP,
     )
-    out, err = await process.communicate()
+    try:
+        out, err = await process.communicate()
+    except BaseException:
+        # A cancelled call must not leave git writing into a clone that is being cleaned up.
+        if process.returncode is None:
+            await _stop(process)
+        raise
     if process.returncode != 0:
         raise RuntimeError(f"git {args[0]} failed: {err.decode(errors='replace').strip()}")
     return out
+
+
+async def _stop(process: asyncio.subprocess.Process) -> None:
+    """Stop git and the helpers it started. ``SIGTERM`` comes first because git removes its lock
+    files on it, and a lock left in a mirror would fail every later fetch."""
+    if not _KILL_GROUP:
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        # macOS raises PermissionError for a group whose only member is an unreaped zombie.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, sig)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), _STOP_GRACE.total_seconds())
+            return
+    await process.wait()
 
 
 async def _clone(url: str, mirror: Path) -> None:

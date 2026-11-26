@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from datetime import timedelta
 from pathlib import Path
@@ -15,6 +16,7 @@ from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
 from temporal_agent_kit import agent
+from temporal_agent_kit.code_mode import git_fs
 from temporal_agent_kit.code_mode.activity_fs import FsCall, FsRead, OKFGraphCall
 
 NOTE = "---\ntype: Fact\ntitle: A\n---\nSee [b](b.md).\n"
@@ -179,6 +181,40 @@ async def test_one_key_for_two_urls_gives_two_clones(tmp_path: Path):
     for name in ("a", "b", "a"):
         assert (await env.run(reads[name], call)).content == f"repo {name}"
     assert len(list((tmp_path / "cache").glob("kb-*.git"))) == 2
+
+
+@pytest.fixture
+def git_runs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[tuple[Any, ...], Any]]:
+    runs: list[tuple[tuple[Any, ...], Any]] = []
+    spawn = asyncio.create_subprocess_exec
+
+    async def spy(*args: Any, **kwargs: Any) -> Any:
+        process = await spawn(*args, **kwargs)
+        runs.append((args, process))
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy)
+    return runs
+
+
+@pytest.mark.skipif(not git_fs._KILL_GROUP, reason="stopping git's helpers needs process groups")
+async def test_a_cancelled_git_call_stops_git_and_its_children(
+    tmp_path: Path, git_runs: list[tuple[tuple[Any, ...], Any]]
+):
+    started, stopped = tmp_path / "started", tmp_path / "stopped"
+    script = f'trap \'touch "{stopped}"; exit 1\' TERM; touch "{started}"; sleep 10 & wait'
+    call = asyncio.create_task(git_fs._git("-c", f"alias.slow=!{script}", "slow", cwd=tmp_path))
+    async with asyncio.timeout(5):
+        while not started.exists():
+            await asyncio.sleep(0.01)
+    call.cancel()
+    # The sleep holds git's pipes, so the call only ends quickly if the sleep was stopped too.
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(call, timeout=5)
+
+    assert git_runs[0][1].returncode is not None
+    # Only SIGTERM runs the trap, and git needs SIGTERM to remove its lock files.
+    assert stopped.exists()
 
 
 @pytest.mark.parametrize(

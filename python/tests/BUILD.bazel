@@ -409,6 +409,7 @@ agent_kit_pytest_test(
         ":conftest",
         "//python/temporal_agent_kit:agent",
         "//python/temporal_agent_kit/code_mode:activity_fs",
+        "//python/temporal_agent_kit/code_mode:git_fs",
         "@pypi//pytest",
         "@pypi//temporalio",
     ],

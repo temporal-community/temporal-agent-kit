@@ -149,6 +149,8 @@ AgentKitPlugin(filesystems=[KnowledgeBase])
   commit id when every read of a session must see the same files.
 - **No checkout.** Each worker keeps a bare clone in `cache_dir` and reads files from git's
   object store. Symlinks and submodules are not shown.
+- **The first read clones.** It runs inside one operation, which `bind` limits to 30 seconds by
+  default. For a large repository, give `bind` a longer `timeout`.
 - **Credentials** for a private repository come from the worker's own git configuration (a
   credential helper, or an SSH key). They never go into a config or into workflow history.
 - It works with `okf_bundle_vfs_mount` too, for an OKF bundle that is kept in git.

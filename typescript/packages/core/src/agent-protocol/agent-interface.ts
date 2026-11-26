@@ -303,25 +303,6 @@ export type AutoModeEvaluator = ((ctx: AutoApprovalContext) => Promise<AutoAppro
 // Standardized agent input and messages
 // ---------------------------------------------------------------------------------------------
 
-export const AgentConfigSchema = z.object({
-  approval_policy: ToolApprovalPolicySchema.nullish().transform((v) => v ?? null),
-  auto_approval_criteria: AutoApprovalCriteriaSchema.nullish().transform((v) => v ?? null),
-  agent_id: z
-    .string()
-    .regex(AGENT_ID_PATTERN)
-    .nullish()
-    .transform((v) => v ?? null),
-  // Seconds idle before the runner closes the agent; 0 never closes. Null leaves the agent's
-  // default (`closeAfterIdleDefault`) in force.
-  close_after_idle: z
-    .number()
-    .nonnegative()
-    .nullish()
-    .transform((v) => v ?? null),
-});
-export type AgentConfig = z.output<typeof AgentConfigSchema>;
-export type AgentConfigInput = z.input<typeof AgentConfigSchema>;
-
 // Not z.record, which rebuilds the object and drops a "__proto__" key.
 export const messagePayload = z
   .custom<Record<string, unknown>>(
@@ -353,6 +334,28 @@ export function titleFromMessage(message: AgentMessage): string {
   // By code point, as Python slices a str.
   return Array.from(title).slice(0, TITLE_MAX_CHARS).join("");
 }
+
+export const AgentConfigSchema = z.object({
+  approval_policy: ToolApprovalPolicySchema.nullish().transform((v) => v ?? null),
+  auto_approval_criteria: AutoApprovalCriteriaSchema.nullish().transform((v) => v ?? null),
+  agent_id: z
+    .string()
+    .regex(AGENT_ID_PATTERN)
+    .nullish()
+    .transform((v) => v ?? null),
+  // Seconds idle before the runner closes the agent; 0 never closes. Null leaves the agent's
+  // default (`closeAfterIdleDefault`) in force.
+  close_after_idle: z
+    .number()
+    .nonnegative()
+    .nullish()
+    .transform((v) => v ?? null),
+  // Admitted when the agent starts, as its first message. For a starter that can only start a
+  // workflow, such as a Temporal Schedule.
+  initial_message: AgentMessageSchema.nullish().transform((v) => v ?? null),
+});
+export type AgentConfig = z.output<typeof AgentConfigSchema>;
+export type AgentConfigInput = z.input<typeof AgentConfigSchema>;
 
 // Schemas as Python's pydantic models publish them (field titles included), for wire parity.
 export const TextMessage = z.object({ text: z.string().meta({ title: "Text" }) }).meta({

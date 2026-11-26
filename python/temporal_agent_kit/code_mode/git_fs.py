@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import hashlib
 import os
 import re
 import shutil
@@ -142,7 +143,9 @@ class _GitRepository:
         if subdirectory.is_absolute() or ".." in subdirectory.parts:
             raise ValueError(f"subdirectory '{subdirectory}' must be a path inside the repository")
         self._url = self._repositories[config.repository]
-        self._mirror = self._cache_dir / f"{config.repository}.git"
+        # Two filesystems can give one key different URLs and still share a cache dir.
+        url_id = hashlib.sha256(self._url.encode()).hexdigest()[:16]
+        self._mirror = self._cache_dir / f"{config.repository}-{url_id}.git"
         self._ref = config.ref
         self._subdirectory = subdirectory
         self._entries: dict[PurePosixPath, _Entry] | None = None

@@ -110,7 +110,7 @@ async def test_it_reads_the_tree_of_a_ref(origin: Path, tmp_path: Path):
     missing = await env.run(fs["vfs.test-git.stat"], FsCall(config=config, path="nope.md"))
     assert missing.found is None
     # The clone is bare: nothing is checked out on the worker.
-    assert not (tmp_path / "cache" / "kb.git" / "README.md").exists()
+    assert not list((tmp_path / "cache").rglob("README.md"))
 
 
 async def test_a_subdirectory_is_the_root_of_the_mount(origin: Path, tmp_path: Path):
@@ -159,6 +159,26 @@ async def test_a_recent_clone_is_not_fetched_again(origin: Path, tmp_path: Path)
     # A commit id that the clone does not have yet is fetched whatever the clone's age.
     pinned = {"repository": "kb", "ref": second}
     assert (await env.run(read, FsRead(config=pinned, path="README.md"))).content == "changed"
+
+
+async def test_one_key_for_two_urls_gives_two_clones(tmp_path: Path):
+    reads = {}
+    for name in ("a", "b"):
+        repo = tmp_path / name
+        repo.mkdir()
+        _git(repo, "init", "--quiet", "--initial-branch=main")
+        _commit(repo, {"README.md": f"repo {name}".encode()})
+        fs = agent.git_repository_filesystem(
+            f"test-git-{name}", repositories={"kb": str(repo)}, cache_dir=tmp_path / "cache"
+        )
+        activities = {a.__temporal_activity_definition.name: a for a in fs.activities}
+        reads[name] = activities[f"vfs.test-git-{name}.read"]
+    env = ActivityEnvironment()
+    call = FsRead(config={"repository": "kb", "ref": "main"}, path="README.md")
+
+    for name in ("a", "b", "a"):
+        assert (await env.run(reads[name], call)).content == f"repo {name}"
+    assert len(list((tmp_path / "cache").glob("kb-*.git"))) == 2
 
 
 @pytest.mark.parametrize(

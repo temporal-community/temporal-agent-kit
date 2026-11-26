@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from collections import OrderedDict
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -195,6 +196,39 @@ def git_runs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[tuple[Any, ...], Any
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spy)
     return runs
+
+
+async def test_a_commits_tree_is_listed_once_for_many_calls(
+    origin: Path, tmp_path: Path, git_runs: list[tuple[tuple[Any, ...], Any]]
+):
+    fs = _filesystem(origin, tmp_path, refresh_after=timedelta(hours=1))
+    env = ActivityEnvironment()
+    config = {"repository": "kb", "ref": "main"}
+    for path in ("README.md", "wiki", "wiki/a.md"):
+        await env.run(fs["vfs.test-git.stat"], FsCall(config=config, path=path))
+    assert await env.run(fs["vfs.test-git.list"], FsCall(config=config, path="wiki")) == [
+        "a.md",
+        "b.md",
+        "img",
+    ]
+
+    assert [args[1] for args, _ in git_runs].count("ls-tree") == 1
+
+
+async def test_old_trees_are_dropped_once_too_many_paths_are_kept(
+    origin: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(git_fs, "_trees", OrderedDict())
+    monkeypatch.setattr(git_fs, "_PATHS_KEPT", 1)
+    fs = _filesystem(origin, tmp_path)
+    env = ActivityEnvironment()
+    first = _git(origin, "rev-parse", "HEAD")
+    second = _commit(origin, {"README.md": b"changed"})
+    for ref in (first, second):
+        call = FsCall(config={"repository": "kb", "ref": ref}, path=".")
+        await env.run(fs["vfs.test-git.list"], call)
+
+    assert [commit for _, commit, _ in git_fs._trees] == [second]
 
 
 @pytest.mark.skipif(not git_fs._KILL_GROUP, reason="stopping git's helpers needs process groups")

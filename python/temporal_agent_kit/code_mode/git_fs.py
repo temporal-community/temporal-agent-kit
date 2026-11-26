@@ -33,7 +33,9 @@ import re
 import shutil
 import signal
 import tempfile
+import threading
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
@@ -70,6 +72,20 @@ class _Entry:
     is_dir: bool
     object_id: str
     size: int
+
+
+@dataclass(frozen=True)
+class _Tree:
+    entries: dict[PurePosixPath, _Entry]
+    children: dict[PurePosixPath, list[str]]
+    mtime: float
+
+
+# Parsed trees by (mirror, commit, subdirectory). A commit's tree never changes, so a kept tree
+# is never stale. The bound counts paths (about 1 KiB each), since one tree can be any size.
+_trees: OrderedDict[tuple[Path, str, PurePosixPath], _Tree] = OrderedDict()
+_trees_lock = threading.Lock()
+_PATHS_KEPT = 200_000
 
 
 async def _git(*args: str, cwd: Path | None = None) -> bytes:
@@ -178,8 +194,7 @@ class _GitRepository:
         self._mirror = self._cache_dir / f"{config.repository}-{url_id}.git"
         self._ref = config.ref
         self._subdirectory = subdirectory
-        self._entries: dict[PurePosixPath, _Entry] | None = None
-        self._mtime = 0.0
+        self._loaded: _Tree | None = None
 
     async def _commit(self) -> str:
         """The commit the ref points to. A full commit id that the mirror already has needs no
@@ -198,11 +213,30 @@ class _GitRepository:
         except RuntimeError:
             raise ValueError(f"ref {self._ref!r} is not in the repository") from None
 
-    async def _tree(self) -> dict[PurePosixPath, _Entry]:
-        """Every path under the subdirectory, read once for each instance."""
-        if self._entries is not None:
-            return self._entries
+    async def _tree(self) -> _Tree:
+        """Every path under the subdirectory at the ref's commit. The ref is resolved once for
+        each instance, and the tree is read once for each commit."""
+        if self._loaded is not None:
+            return self._loaded
         commit = await self._commit()
+        key = (self._mirror, commit, self._subdirectory)
+        with _trees_lock:
+            tree = _trees.get(key)
+            if tree is not None:
+                _trees.move_to_end(key)
+        if tree is None:
+            tree = await self._read_tree(commit)
+            with _trees_lock:
+                _trees[key] = tree
+                _trees.move_to_end(key)
+                kept = sum(len(t.entries) for t in _trees.values())
+                while len(_trees) > 1 and kept > _PATHS_KEPT:
+                    _, dropped = _trees.popitem(last=False)
+                    kept -= len(dropped.entries)
+        self._loaded = tree
+        return tree
+
+    async def _read_tree(self, commit: str) -> _Tree:
         whole = self._subdirectory == PurePosixPath(".")
         root = commit if whole else f"{commit}:{self._subdirectory}"
         try:
@@ -223,20 +257,26 @@ class _GitRepository:
             entries[PurePosixPath(name.decode(errors="surrogateescape"))] = _Entry(
                 is_dir=kind == "tree", object_id=object_id, size=0 if kind == "tree" else int(size)
             )
-        self._mtime = float(await _git("show", "-s", "--format=%ct", commit, cwd=self._mirror))
-        self._entries = entries
-        return entries
+        children: dict[PurePosixPath, list[str]] = {}
+        for path in entries:
+            if path != PurePosixPath("."):
+                children.setdefault(path.parent, []).append(path.name)
+        for names in children.values():
+            names.sort()
+        mtime = float(await _git("show", "-s", "--format=%ct", commit, cwd=self._mirror))
+        return _Tree(entries=entries, children=children, mtime=mtime)
 
     async def stat(self, path: PurePosixPath) -> FileStat | None:
-        entry = (await self._tree()).get(path)
+        tree = await self._tree()
+        entry = tree.entries.get(path)
         if entry is None:
             return None
-        return FileStat(is_dir=entry.is_dir, size=entry.size, mtime=self._mtime)
+        return FileStat(is_dir=entry.is_dir, size=entry.size, mtime=tree.mtime)
 
     async def read(
         self, path: PurePosixPath, offset: int = 0, length: int | None = None
     ) -> bytes:
-        entry = (await self._tree()).get(path)
+        entry = (await self._tree()).entries.get(path)
         if entry is None:
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
         if entry.is_dir:
@@ -245,13 +285,13 @@ class _GitRepository:
         return data[offset:] if length is None else data[offset : offset + length]
 
     async def list(self, path: PurePosixPath) -> list[str]:
-        entries = await self._tree()
-        entry = entries.get(path)
+        tree = await self._tree()
+        entry = tree.entries.get(path)
         if entry is None:
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
         if not entry.is_dir:
             raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), str(path))
-        return sorted(p.name for p in entries if p != path and p.parent == path)
+        return list(tree.children.get(path, ()))
 
 
 def default_git_cache_dir() -> Path:

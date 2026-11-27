@@ -1,7 +1,7 @@
 """Disaster recovery: the agent recovers when Claude Code or its Worker is lost, at each point in a turn.
 
-Each disaster in ``DISASTERS`` hits an idle agent, a model call, a pending tool approval, and a running
-tool. The turn in progress is repeated on a fresh Claude Code.
+Each disaster in ``DISASTERS`` hits an idle agent, a model call, a pending tool approval, a running tool, and
+steering not yet claimed or already claimed. The turn in progress is repeated on a fresh Claude Code.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ from temporal_agent_kit.agent_protocol import (
     AgentEvent,
     ModelInteractionEnded,
     ModelInteractionStarted,
+    SteeringClaimed,
+    SteeringDropped,
     ToolApprovalRequested,
     ToolApprovalResolved,
     ToolErrorEvent,
@@ -69,6 +71,7 @@ WRITE = tool_use("toolu_write", "Write", {"file_path": "out.txt", "content": "wr
 GREET = tool_use("toolu_greet", "mcp__agent_kit__greet", {"name": "Claude"})
 SLEEP = tool_use("toolu_sleep", "Bash", {"command": "sleep 20 && touch slept.txt"})
 WAIT = tool_use("toolu_wait", "mcp__agent_kit__wait_a_while")
+STEERING = "Focus on tests."
 
 
 class _Model:
@@ -188,3 +191,47 @@ async def test_a_disaster_during_a_running_tool_fails_it(
     assert not (tmp_path / "slept.txt").exists()
     assert_tools_settled(events)
     _assert_model_calls_ended(events)
+
+
+@pytest.mark.parametrize("disaster", DISASTERS)
+async def test_steering_not_yet_claimed_survives_a_disaster(
+    disaster: Disaster, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The first attempt's tool never finishes, so the retried turn's tool brings the steering to Claude.
+    model = _Model((WAIT,), (GREET,))
+    async with agent_session(monkeypatch, tmp_path, model) as session:
+        struck = False
+
+        async def steer_then_strike(event: AgentEvent) -> None:
+            nonlocal struck
+            if isinstance(event.event, ToolStartEvent) and event.event.tool_id == "toolu_wait_1" and not struck:
+                struck = True
+                await session.steer(STEERING)
+                await disaster.strike(session)
+
+        events = await session.collect(session.start_turn("Do the work"), on_event=steer_then_strike)
+        after_tools = json.dumps(session.api.requests[-1]["messages"])
+
+    assert [e.tool_id for e in of_type(events, SteeringClaimed)] == ["toolu_greet_2"]
+    assert of_type(events, SteeringDropped) == []
+    assert STEERING in after_tools
+
+
+@pytest.mark.parametrize("disaster", DISASTERS)
+async def test_steering_already_claimed_is_not_claimed_again(
+    disaster: Disaster, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The first attempt's tool claims the steering, then the disaster hits the model call after it.
+    model = _Model((GREET,), (), hold=(1, 2))
+    async with agent_session(monkeypatch, tmp_path, model) as session:
+        turn = asyncio.create_task(session.collect(session.start_turn("Do the work")))
+        await model.reached[1].wait()
+        await session.steer(STEERING)
+        model.release[1].set()
+        await model.reached[2].wait()
+        await disaster.strike(session)
+        model.release_all()
+        events = await turn
+
+    assert [e.tool_id for e in of_type(events, SteeringClaimed)] == ["toolu_greet_1"]
+    assert of_type(events, SteeringDropped) == []

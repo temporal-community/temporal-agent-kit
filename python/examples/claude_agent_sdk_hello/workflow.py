@@ -15,7 +15,11 @@ with workflow.unsafe.imports_passed_through():
         TextReply,
         ToolApprovalPolicy,
     )
-    from temporal_agent_kit.agent_workflow import AgentWorkflowRunner
+    from temporal_agent_kit.agent_workflow import (
+        AgentWorkflowRunner,
+        Injected,
+        MessageContext,
+    )
     from temporal_agent_kit.ai_sdks.claude_agent_sdk import (
         AgentKitClaudeSDKClient,
     )
@@ -60,6 +64,14 @@ class ClaudeAgentSDKHelloWorkflow:
     @agent.accepts(mid_turn=MidTurn.ENQUEUE)
     async def ask(self, message: TextMessage) -> TextReply:
         """Ask Claude something. Sent while Claude is working, it waits for the current turn to end."""
+        return await self._ask(message.text)
+
+    @agent.accepts(mid_turn=MidTurn.ACCEPT)
+    async def btw(self, message: TextMessage, ctx: Injected[MessageContext]) -> TextReply:
+        """Steer Claude while it is working. Sent while Claude is idle, it is asked like `ask`."""
+        if ctx.joined_turn:
+            self._runner.steer(message.text)
+            return TextReply(text="")
         return await self._ask(message.text)
 
     @agent.teardown

@@ -8,6 +8,8 @@ Anthropic ``/v1/messages`` SSE server, using ``AgentClient`` interfaces.
    scenarios in sequence on a single real Claude Code process:
    - plain LLM turn
    - built-in tool (Write) approved, then denied, by human
+   - steering claimed mid-tool via PostToolUse
+   - steering queued during an LLM-only turn and dropped at turn end
    - clean close
 
 2. Four isolated disaster recovery tests (the real failure modes in production):
@@ -261,6 +263,10 @@ def _signal_claude_children(sig: signal.Signals) -> int:
     return signalled
 
 
+def _events_of(events: list[AgentEvent], event_type: AgentEventType) -> list[AgentEvent]:
+    return [e for e in events if e.event.type == event_type]
+
+
 def _assert_each_model_tool_call_requested_first(events: list[AgentEvent]) -> None:
     """Each tool call the model made has one ToolRequested, published before its other events."""
     by_tool: dict[str, list[Any]] = {}
@@ -343,6 +349,9 @@ async def _send_turn(
 async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     approved_file = tmp_path / "approved.txt"
     denied_file = tmp_path / "denied.txt"
+    hold_turn = asyncio.Event()
+    turn_reached_llm = asyncio.Event()
+    hold_on_prompts: set[str] = {"Run steered tool.", "Write a poem."}
     call_count = 0
 
     async def respond(body: dict[str, Any]) -> bytes:
@@ -351,7 +360,13 @@ async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path:
         text = _last_user_text(body)
 
         if "TOOL_RESULT:" in text:
-            return _sse_text(f"AFTER_TOOL:{text}", msg_id=f"msg_{call_count}")
+            steered = "|STEERED" if "Make it short." in json.dumps(body) else ""
+            return _sse_text(f"AFTER_TOOL:{text}{steered}", msg_id=f"msg_{call_count}")
+
+        if any(p in text for p in hold_on_prompts):
+            turn_reached_llm.set()
+            await hold_turn.wait()
+            hold_turn.clear()
 
         if "Approve write." in text:
             return _sse_tool_use(
@@ -365,6 +380,13 @@ async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path:
                 "toolu_write_deny",
                 "Write",
                 {"file_path": str(denied_file), "content": "denied"},
+                msg_id=f"msg_{call_count}",
+            )
+        if "Run steered tool." in text:
+            return _sse_tool_use(
+                "toolu_code_steer",
+                "mcp__agent_kit__run_code",
+                {"script": "await get_temperature('Toronto')"},
                 msg_id=f"msg_{call_count}",
             )
         return _sse_text(f"ECHO:{text.strip()}", msg_id=f"msg_{call_count}")
@@ -414,6 +436,38 @@ async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path:
                             e.event.approved for e in ev2_deny if isinstance(e.event, ToolApprovalResolved)
                         ] == [False]
                         assert not denied_file.exists()
+
+                        # Turn 3: Steering claimed mid-tool (PostToolUse)
+                        turn_reached_llm.clear()
+                        turn3_task = asyncio.create_task(_send_turn(client, "Run steered tool.", approve=True))
+                        await turn_reached_llm.wait()
+                        await client.submit_message(
+                            ClaudeAgentSDKHelloWorkflow.btw.__name__,
+                            {"text": "Make it short."},
+                        )
+                        hold_turn.set()
+                        ev3 = await turn3_task
+                        (enqueued3,) = _events_of(ev3, AgentEventType.STEERING_ENQUEUED)
+                        (claimed3,) = _events_of(ev3, AgentEventType.STEERING_CLAIMED)
+                        assert claimed3.event.steering_ids == [enqueued3.event.steering_id]
+                        assert not _events_of(ev3, AgentEventType.STEERING_DROPPED)
+                        assert "|STEERED" in _reply_text(ev3)
+
+                        # Turn 4: Steering queued during LLM-only turn -> dropped at turn end
+                        turn_reached_llm.clear()
+                        turn4_task = asyncio.create_task(_send_turn(client, "Write a poem."))
+                        await turn_reached_llm.wait()
+                        await client.submit_message(
+                            ClaudeAgentSDKHelloWorkflow.btw.__name__,
+                            {"text": "Too late."},
+                        )
+                        hold_turn.set()
+                        ev4 = await turn4_task
+                        (enqueued4,) = _events_of(ev4, AgentEventType.STEERING_ENQUEUED)
+                        (dropped4,) = _events_of(ev4, AgentEventType.STEERING_DROPPED)
+                        assert dropped4.event.steering_ids == [enqueued4.event.steering_id]
+                        assert not _events_of(ev4, AgentEventType.STEERING_CLAIMED)
+                        assert "Write a poem." in _reply_text(ev4)
 
                         # Clean close
                         await handle.signal("close")

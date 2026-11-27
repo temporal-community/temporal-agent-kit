@@ -16,6 +16,7 @@ from claude_agent_sdk import (
     ToolPermissionContext,
 )
 from claude_agent_sdk.types import (
+    HookCallback,
     HookContext,
     HookInput,
     HookJSONOutput,
@@ -109,7 +110,7 @@ class AgentKitClaudeSDKClient(TemporalClaudeSDKClient):
         tools: Sequence[Callable[..., Awaitable[Any]]],
         injections: Mapping[str, Any] | None,
     ) -> ClaudeAgentOptions:
-        post_tool_hooks = HookMatcher(hooks=[self._builtin_tools_end_claude_hook])
+        post_tool_hooks = HookMatcher(hooks=[self._steering_claude_hook(self._runner), self._builtin_tools_end_claude_hook])
         hooks = dict(base.hooks or {})
         hooks["PreToolUse"] = [*hooks.get("PreToolUse", []), HookMatcher(hooks=[self._builtin_tools_start_claude_hook])]
         for event in ("PostToolUse", "PostToolUseFailure"):
@@ -202,6 +203,33 @@ class AgentKitClaudeSDKClient(TemporalClaudeSDKClient):
             self._publish(ToolErrorEvent(tool_id=tool_use_id, tool_name=tool_name, message=hook_input["error"]))
             
         return {}
+
+    def _steering_claude_hook(self, runner: AgentWorkflowRunner) -> HookCallback:
+        async def claim_steering(
+            hook_input: HookInput,
+            tool_use_id: str | None,
+            _context: HookContext,
+        ) -> HookJSONOutput:              
+            steering = runner.claim_steering(tool_id=tool_use_id)
+            if steering is None:
+                return {}
+
+            if hook_input["hook_event_name"] == "PostToolUse":
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PostToolUse",
+                        "additionalContext": steering.render(),
+                    }
+                }
+
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUseFailure",
+                    "additionalContext": steering.render(),
+                }
+            }
+
+        return claim_steering
 
     def _transport_hooks(self, base: TransportHooks | None) -> TransportHooks:
         hooks: TransportHooks = {**(base or {})}

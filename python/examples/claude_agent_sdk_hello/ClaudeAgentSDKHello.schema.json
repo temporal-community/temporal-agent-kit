@@ -12,6 +12,16 @@
       "output": {
         "$ref": "#/$defs/TextReply"
       }
+    },
+    "btw": {
+      "description": "Steer Claude while it is working. Sent while Claude is idle, it is asked like `ask`.",
+      "mid_turn": "accept",
+      "input": {
+        "$ref": "#/$defs/TextMessage"
+      },
+      "output": {
+        "$ref": "#/$defs/TextReply"
+      }
     }
   },
   "states": {},

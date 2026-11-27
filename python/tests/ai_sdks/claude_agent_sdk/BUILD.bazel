@@ -60,6 +60,19 @@ agent_kit_pytest_test(
 )
 
 agent_kit_pytest_test(
+    name = "test_steering",
+    srcs = ["test_steering.py"],
+    imports = ["../../.."],
+    deps = [
+        ":_helpers",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/tests:conftest",
+        "@pypi//claude_agent_sdk",
+        "@pypi//pytest",
+    ],
+)
+
+agent_kit_pytest_test(
     name = "test_disaster_recovery",
     srcs = ["test_disaster_recovery.py"],
     imports = ["../../.."],

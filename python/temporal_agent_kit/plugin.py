@@ -62,6 +62,7 @@ from temporalio.converter import DataConverter, DefaultPayloadConverter, Externa
 from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig
 
+from temporal_agent_kit.stream_context_interceptor import StreamContextInterceptor
 from temporal_agent_kit.utils.large_payload import DEFAULT_PAYLOAD_STORAGE
 
 if TYPE_CHECKING:
@@ -159,6 +160,8 @@ class AgentKitPlugin(SimplePlugin):
       ``tools``.
     * **Filesystem activities** — the ``vfs.<name>.*`` activities of each
       :class:`~temporal_agent_kit.code_mode.ActivityFileSystem` in ``filesystems``.
+    * **Stream context interceptor** — :class:`StreamContextInterceptor`, which gives each
+      Activity the stream context of the message handler that started it.
 
     Args:
         tools: The agent's tools. The activity-backed ones get their durable bodies
@@ -198,12 +201,11 @@ class AgentKitPlugin(SimplePlugin):
         def data_converter(converter: DataConverter | None) -> DataConverter:
             return _data_converter(converter, offload=large_payload_offload)
 
-
-
         super().__init__(
             name="AgentKitPlugin",
             data_converter=data_converter,
             activities=self._append_activities,
+            interceptors=[StreamContextInterceptor()],
         )
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:

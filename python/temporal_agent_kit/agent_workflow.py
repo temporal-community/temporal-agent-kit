@@ -423,6 +423,11 @@ _CURRENT_MESSAGE_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar
     "agent_message_id", default=None
 )
 
+# The runner's ``current_stream_context`` for the message being handled.
+_CURRENT_STREAM_CONTEXT: contextvars.ContextVar[TurnStreamContext | None] = contextvars.ContextVar(
+    "agent_stream_context", default=None
+)
+
 
 class _Ambient:
     """Sentinel for ``_pub(message_id=...)`` meaning "read :data:`_CURRENT_MESSAGE_ID`".
@@ -3159,11 +3164,20 @@ class AgentWorkflowRunner:
         the turn it JOINED, and with this message's ``message_id``, parked in
         :data:`_CURRENT_MESSAGE_ID` for the whole task so everything the handler causes —
         deltas from a model activity, tool lifecycle, approval gates, subagent brackets — is
-        attributed without any of those call sites knowing about it. The var is set and never
-        reset: it is this task's own context, which ends with the task.
+        attributed without any of those call sites knowing about it. :data:`_CURRENT_STREAM_CONTEXT`
+        is set beside it to this participant's stream context. Neither is reset: they live in
+        this task's own context, which ends with the task.
         """
         turn_id, turn_number = admitted.turn_id, admitted.turn_number
         _CURRENT_MESSAGE_ID.set(admitted.message_id)
+        _CURRENT_STREAM_CONTEXT.set(
+            TurnStreamContext(
+                turn_id=turn_id,
+                turn_number=turn_number,
+                message_id=admitted.message_id,
+                agent_id=self._agent_id,
+            )
+        )
         self._pub(turn_id, turn_number, MessageHandlerStart())
         try:
             result = await self._dispatch_turn(agent, admitted, joined=joined)

@@ -1,0 +1,160 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    data = [
+        # keep
+        "LICENSE",
+        "py.typed",
+    ],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":_agent_kit_client",
+        ":_agent_kit_event_publisher",
+        ":_client",
+        ":_plugin",
+        ":_subprocess",
+        ":_transport",
+        ":_types",
+    ],
+)
+
+py_library(
+    name = "_activities",
+    srcs = ["_activities.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":_constants",
+        ":_heartbeat_decorator",
+        ":_types",
+        "@pypi//claude_agent_sdk",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "_agent_kit_event_publisher",
+    srcs = ["_agent_kit_event_publisher.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":_agent_kit_mcp_server",
+        ":_types",
+        "//python/temporal_agent_kit:agent_workflow",
+        "//python/temporal_agent_kit:stream_context",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "@pypi//claude_agent_sdk",
+    ],
+)
+
+py_library(
+    name = "_client",
+    srcs = ["_client.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":_transport",
+        "@pypi//claude_agent_sdk",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "_constants",
+    srcs = ["_constants.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = ["@pypi//temporalio"],
+)
+
+py_library(
+    name = "_heartbeat_decorator",
+    srcs = ["_heartbeat_decorator.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = ["@pypi//temporalio"],
+)
+
+py_library(
+    name = "_plugin",
+    srcs = ["_plugin.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":_activities",
+        ":_constants",
+        ":_subprocess",
+        ":_types",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "_subprocess",
+    srcs = ["_subprocess.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":_types",
+        "@pypi//claude_agent_sdk",
+    ],
+)
+
+py_library(
+    name = "_transport",
+    srcs = ["_transport.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":_constants",
+        ":_types",
+        "@pypi//claude_agent_sdk",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "_types",
+    srcs = ["_types.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        "@pypi//claude_agent_sdk",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "_agent_kit_client",
+    srcs = ["_agent_kit_client.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":_agent_kit_mcp_server",
+        ":_client",
+        ":_types",
+        "//python/temporal_agent_kit:agent_workflow",
+        "//python/temporal_agent_kit:stream_context",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "@pypi//claude_agent_sdk",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "_agent_kit_mcp_server",
+    srcs = ["_agent_kit_mcp_server.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        "//python/temporal_agent_kit:agent_workflow",
+        "@pypi//claude_agent_sdk",
+        "@pypi//mcp",
+        "@pypi//mcp_types",
+        "@pypi//pydantic",
+        "@pypi//pydantic_core",
+    ],
+)

@@ -12,11 +12,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import timedelta
 
 import pytest_asyncio
 from pydantic import BaseModel
+from temporalio import workflow
 from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.contrib.workflow_streams import WorkflowStream, WorkflowStreamClient
@@ -36,9 +38,12 @@ from temporal_agent_kit.agent_protocol import (
     TextReply,
     ToolApprovalPolicy,
     AgentMessageReply,
+    ToolEndEvent,
+    ToolErrorEvent,
+    ToolStartEvent,
 )
 from temporal_agent_kit.agent import Injected
-from temporal_agent_kit.agent_workflow import _injected_param_names
+from temporal_agent_kit.agent_workflow import _current_runner, _injected_param_names
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +97,19 @@ async def return_nan(text: str) -> dict[str, float]:
     return {"ratio": float("nan")}
 
 
+@agent.tool_defn()
+async def wait_forever(text: str) -> str:
+    """A workflow tool that never finishes on its own."""
+    await workflow.wait_condition(lambda: False)
+    return text
+
+
+@agent.tool_defn()
+async def run_inner_tool(text: str) -> str:
+    """A workflow tool that runs another tool, like Code Mode's run_code."""
+    return await _current_runner().run_tool("inner", wait_forever, text)
+
+
 # ---------------------------------------------------------------------------
 # Probe workflow: each text turn runs the activity tool twice + the workflow tool
 # ---------------------------------------------------------------------------
@@ -135,6 +153,18 @@ class ToolProbeAgent:
             except ApplicationError as e:
                 failures.append(f"{tool_id}:{e.type}")
         return TextReply(text=" ".join(failures))
+
+    @agent.accepts
+    async def probe_cancel(self, message: TextMessage) -> TextReply:
+        """Cancel a tool while the tool it runs is still in progress."""
+        task = asyncio.create_task(self._runner.run_tool("outer", run_inner_tool, message.text))
+        await workflow.sleep(1)
+        task.cancel()
+        try:
+            await task
+            return TextReply(text="finished")
+        except asyncio.CancelledError:
+            return TextReply(text="cancelled")
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +217,7 @@ async def _collect_until_turn_end(
 async def test_activity_and_workflow_tools_publish_lifecycle(client_and_queue):
     client, task_queue = client_and_queue
     handle = await client.start_workflow(
-        ToolProbeAgent.run,
+        ToolProbeAgent.run,  # type: ignore[attr-defined]  # added by @agent.defn
         AgentConfig(),
         id=f"ToolProbeAgent-{uuid.uuid4()}",
         task_queue=task_queue,
@@ -236,7 +266,7 @@ async def test_activity_and_workflow_tools_publish_lifecycle(client_and_queue):
 async def test_tool_end_carries_the_result_as_json(client_and_queue):
     client, task_queue = client_and_queue
     handle = await client.start_workflow(
-        ToolProbeAgent.run,
+        ToolProbeAgent.run,  # type: ignore[attr-defined]  # added by @agent.defn
         AgentConfig(),
         id=f"ToolProbeAgent-{uuid.uuid4()}",
         task_queue=task_queue,
@@ -295,3 +325,35 @@ def test_injected_param_names_empty_when_none_injected():
     async def fn(page_url: str, limit: int = 5) -> None: ...
 
     assert _injected_param_names(fn) == ()
+
+
+async def test_cancelled_tools_publish_errors_innermost_first(client_and_queue):
+    client, task_queue = client_and_queue
+    handle = await client.start_workflow(
+        ToolProbeAgent.run,  # type: ignore[attr-defined]  # added by @agent.defn
+        AgentConfig(),
+        id=f"ToolProbeAgent-{uuid.uuid4()}",
+        task_queue=task_queue,
+    )
+    await handle.execute_update(
+        SEND_AGENT_MESSAGE_UPDATE,
+        AgentMessage(type="probe_cancel", payload={"text": "ping"}),
+        result_type=AgentMessageReply,
+    )
+
+    events = await _collect_until_turn_end(client, handle.id)
+
+    lifecycle = [
+        (e.event.type, e.event.tool_id)
+        for e in events
+        if isinstance(e.event, (ToolStartEvent, ToolEndEvent, ToolErrorEvent))
+    ]
+    assert lifecycle == [
+        (AgentEventType.TOOL_START, "outer"),
+        (AgentEventType.TOOL_START, "inner"),
+        (AgentEventType.TOOL_ERROR, "inner"),
+        (AgentEventType.TOOL_ERROR, "outer"),
+    ]
+    assert {e.event.message for e in events if isinstance(e.event, ToolErrorEvent)} == {
+        "Tool call cancelled."
+    }

@@ -400,3 +400,16 @@ agent_kit_pytest_test(
         "@pypi//temporalio",
     ],
 )
+
+agent_kit_pytest_test(
+    name = "test_stream_context_interceptor",
+    srcs = ["test_stream_context_interceptor.py"],
+    imports = [".."],
+    deps = [
+        ":conftest",
+        "//python/temporal_agent_kit:agent_workflow",
+        "//python/temporal_agent_kit:plugin",
+        "//python/temporal_agent_kit:stream_context",
+        "@pypi//temporalio",
+    ],
+)

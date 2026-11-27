@@ -423,6 +423,11 @@ _CURRENT_MESSAGE_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar
     "agent_message_id", default=None
 )
 
+# The runner's ``current_stream_context`` for the message being handled.
+_CURRENT_STREAM_CONTEXT: contextvars.ContextVar[TurnStreamContext | None] = contextvars.ContextVar(
+    "agent_stream_context", default=None
+)
+
 
 class _Ambient:
     """Sentinel for ``_pub(message_id=...)`` meaning "read :data:`_CURRENT_MESSAGE_ID`".
@@ -470,6 +475,9 @@ def _current_tool_id() -> str:
             "run_tool(...) invocation"
         )
     return tool_id
+
+
+_TOOL_CANCELLED = "Tool call cancelled."
 
 
 def _current_runner() -> AgentWorkflowRunner:
@@ -592,33 +600,38 @@ async def _apply_approval_policy(
         ToolApprovalRequested(tool_id=tool_id, tool_name=tool_name, tool_input=tool_input),
     )
 
-    # ``auto_ctx`` is ``None`` when auto mode must not decide this call at all — it is off,
-    # or no criteria set governs this tool. The harness settles that BEFORE any evaluator is
-    # asked, so "there are no rules for this" can never become a model call, and opens no
-    # bracket since nothing was evaluated. ``decision`` is additionally ``None`` when the
-    # evaluator failed or was superseded; those close their own bracket saying which.
-    auto_ctx = runner._auto_mode_context(
-        tool_name,
-        tool_input,
-        inherently_safe=inherently_safe,
-        tool_description=tool_description,
-        declared_criteria_set=auto_approval_criteria,
-    )
-    decision = (
-        await runner._run_auto_mode_evaluator(auto_ctx, tool_id=tool_id, stream=ctx)
-        if auto_ctx is not None
-        else None
-    )
-    if decision is not None:
-        if decision.verdict is AutoApprovalVerdict.APPROVE:
-            runner._resolve_and_publish(tool_id, approved=True, reason=decision.reason)
-        elif decision.verdict is AutoApprovalVerdict.DENY:
-            runner._resolve_and_publish(tool_id, approved=False, reason=decision.reason)
-        # ESCALATE: leave it PENDING and fall through to the human gate below.
+    try:
+        # ``auto_ctx`` is ``None`` when auto mode must not decide this call at all — it is off,
+        # or no criteria set governs this tool. The harness settles that BEFORE any evaluator is
+        # asked, so "there are no rules for this" can never become a model call, and opens no
+        # bracket since nothing was evaluated. ``decision`` is additionally ``None`` when the
+        # evaluator failed or was superseded; those close their own bracket saying which.
+        auto_ctx = runner._auto_mode_context(
+            tool_name,
+            tool_input,
+            inherently_safe=inherently_safe,
+            tool_description=tool_description,
+            declared_criteria_set=auto_approval_criteria,
+        )
+        decision = (
+            await runner._run_auto_mode_evaluator(auto_ctx, tool_id=tool_id, stream=ctx)
+            if auto_ctx is not None
+            else None
+        )
+        if decision is not None:
+            if decision.verdict is AutoApprovalVerdict.APPROVE:
+                runner._resolve_and_publish(tool_id, approved=True, reason=decision.reason)
+            elif decision.verdict is AutoApprovalVerdict.DENY:
+                runner._resolve_and_publish(tool_id, approved=False, reason=decision.reason)
+            # ESCALATE: leave it PENDING and fall through to the human gate below.
 
-    await workflow.wait_condition(
-        lambda: runner._status.is_approval_resolved(tool_id) or runner._closed
-    )
+        await workflow.wait_condition(
+            lambda: runner._status.is_approval_resolved(tool_id) or runner._closed
+        )
+    except asyncio.CancelledError:
+        if not runner._status.is_approval_resolved(tool_id):
+            runner._resolve_and_publish(tool_id, approved=False, reason=_TOOL_CANCELLED)
+        raise
 
     # CAUSAL ORDERING: the ToolApprovalResolved event is published at the RESOLUTION SITE
     # (the ``tool_approval`` handler, the policy-update cascade, and the auto-mode
@@ -2727,6 +2740,7 @@ class AgentWorkflowRunner:
         self._status.resolve_approval(tool_id, approved=approved, reason=reason, remember=remember)
         self._publish_approval_resolved(tool_id)
 
+
     def _publish_approval_resolved(self, tool_id: str) -> None:
         """Publish the :class:`ToolApprovalResolved` for an already-resolved entry, against
         the turn AND message that own the call — not the publisher's own ambient context. An
@@ -3159,11 +3173,20 @@ class AgentWorkflowRunner:
         the turn it JOINED, and with this message's ``message_id``, parked in
         :data:`_CURRENT_MESSAGE_ID` for the whole task so everything the handler causes —
         deltas from a model activity, tool lifecycle, approval gates, subagent brackets — is
-        attributed without any of those call sites knowing about it. The var is set and never
-        reset: it is this task's own context, which ends with the task.
+        attributed without any of those call sites knowing about it. :data:`_CURRENT_STREAM_CONTEXT`
+        is set beside it to this participant's stream context. Neither is reset: they live in
+        this task's own context, which ends with the task.
         """
         turn_id, turn_number = admitted.turn_id, admitted.turn_number
         _CURRENT_MESSAGE_ID.set(admitted.message_id)
+        _CURRENT_STREAM_CONTEXT.set(
+            TurnStreamContext(
+                turn_id=turn_id,
+                turn_number=turn_number,
+                message_id=admitted.message_id,
+                agent_id=self._agent_id,
+            )
+        )
         self._pub(turn_id, turn_number, MessageHandlerStart())
         try:
             result = await self._dispatch_turn(agent, admitted, joined=joined)
@@ -3941,6 +3964,13 @@ def activity_tool_defn(
                         )
                     )
                     raise
+                except asyncio.CancelledError:
+                    pub.publish(
+                        ToolErrorEvent(
+                            tool_id=tool_ctx.tool_id, tool_name=tool_name, message=_TOOL_CANCELLED
+                        )
+                    )
+                    raise
                 pub.publish(
                     ToolEndEvent(
                         tool_id=tool_ctx.tool_id,
@@ -4154,6 +4184,13 @@ def tool_defn(
                     ctx.turn_id,
                     ctx.turn_number,
                     ToolErrorEvent(tool_id=tool_id, tool_name=tool_name, message=str(e)),
+                )
+                raise
+            except asyncio.CancelledError:
+                runner._pub(
+                    ctx.turn_id,
+                    ctx.turn_number,
+                    ToolErrorEvent(tool_id=tool_id, tool_name=tool_name, message=_TOOL_CANCELLED),
                 )
                 raise
             runner._pub(

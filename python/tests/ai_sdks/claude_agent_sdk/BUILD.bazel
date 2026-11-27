@@ -1,0 +1,85 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("//bazel:pytest.bzl", "agent_kit_pytest_test")
+
+py_library(
+    name = "_helpers",
+    testonly = True,
+    srcs = ["_helpers.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        "//python/temporal_agent_kit:agent",
+        "//python/temporal_agent_kit:agent_client",
+        "//python/temporal_agent_kit:agent_workflow",
+        "//python/temporal_agent_kit:plugin",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/temporal_agent_kit/ai_sdks/claude_agent_sdk:__init__",
+        "//python/temporal_agent_kit/ai_sdks/claude_agent_sdk:_constants",
+        "@pypi//claude_agent_sdk",
+        "@pypi//pytest",
+        "@pypi//temporalio",
+    ],
+)
+
+agent_kit_pytest_test(
+    name = "test_llm_calls",
+    srcs = ["test_llm_calls.py"],
+    imports = ["../../.."],
+    deps = [
+        ":_helpers",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/tests:conftest",
+        "@pypi//pytest",
+    ],
+)
+
+agent_kit_pytest_test(
+    name = "test_tool_calls",
+    srcs = ["test_tool_calls.py"],
+    imports = ["../../.."],
+    deps = [
+        ":_helpers",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/tests:conftest",
+        "@pypi//pytest",
+        "@pypi//temporalio",
+    ],
+)
+
+agent_kit_pytest_test(
+    name = "test_permissions",
+    srcs = ["test_permissions.py"],
+    imports = ["../../.."],
+    deps = [
+        ":_helpers",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/tests:conftest",
+        "@pypi//claude_agent_sdk",
+        "@pypi//pytest",
+    ],
+)
+
+agent_kit_pytest_test(
+    name = "test_steering",
+    srcs = ["test_steering.py"],
+    imports = ["../../.."],
+    deps = [
+        ":_helpers",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/tests:conftest",
+        "@pypi//claude_agent_sdk",
+        "@pypi//pytest",
+    ],
+)
+
+agent_kit_pytest_test(
+    name = "test_disaster_recovery",
+    srcs = ["test_disaster_recovery.py"],
+    imports = ["../../.."],
+    deps = [
+        ":_helpers",
+        "//python/temporal_agent_kit/agent_protocol:__init__",
+        "//python/tests:conftest",
+        "@pypi//pytest",
+    ],
+)

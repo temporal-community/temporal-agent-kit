@@ -18,6 +18,7 @@ py_library(
     imports = [".."],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":stream_context_interceptor",
         ":subagent_activities",
         "//python/temporal_agent_kit/code_mode:__init__",
         "//python/temporal_agent_kit/code_mode:activity_fs",
@@ -42,6 +43,7 @@ py_library(
         "//python/temporal_agent_kit/ai_sdks:__init__",
         "//python/temporal_agent_kit/ai_sdks:pydantic_ai",
         "//python/temporal_agent_kit/ai_sdks:typesafe",
+        "//python/temporal_agent_kit/ai_sdks/claude_agent_sdk:__init__",
         "//python/temporal_agent_kit/ai_sdks/google_genai_plugin:__init__",
         "//python/temporal_agent_kit/ai_sdks/jev:__init__",
         "//python/temporal_agent_kit/ai_sdks/openai_agents",
@@ -161,6 +163,18 @@ py_library(
     imports = [".."],
     visibility = ["//:__subpackages__"],
     deps = ["@pypi//pydantic"],
+)
+
+py_library(
+    name = "stream_context_interceptor",
+    srcs = ["stream_context_interceptor.py"],
+    imports = [".."],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":agent_workflow",
+        ":stream_context",
+        "@pypi//temporalio",
+    ],
 )
 
 py_library(

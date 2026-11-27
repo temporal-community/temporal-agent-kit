@@ -8,6 +8,8 @@ Anthropic ``/v1/messages`` SSE server, using ``AgentClient`` interfaces.
    scenarios in sequence on a single real Claude Code process:
    - plain LLM turn
    - built-in tool (Write) approved, then denied, by human
+   - Agent Kit MCP tool (run_code) denied by human
+   - Code Mode (Agent Kit MCP run_code) chaining inner Agent Kit tools with human approval
    - steering claimed mid-tool via PostToolUse
    - steering queued during an LLM-only turn and dropped at turn end
    - clean close
@@ -50,7 +52,9 @@ from temporal_agent_kit.agent_protocol import (
     ToolApprovalPolicy,
     ToolApprovalResolved,
     ToolEndEvent,
+    ToolErrorEvent,
     ToolRequested,
+    ToolStartEvent,
 )
 from temporal_agent_kit.ai_sdks.claude_agent_sdk import AgentKitEventPublisher, ClaudeAgentSDKPlugin
 from temporal_agent_kit.ai_sdks.claude_agent_sdk._constants import (
@@ -60,6 +64,17 @@ from temporal_agent_kit.ai_sdks.claude_agent_sdk._constants import (
     WRITE_OPTIONS,
 )
 from temporal_agent_kit.plugin import AgentKitPlugin
+
+_CODE_SCRIPT = """\
+import asyncio
+async def main():
+    temperature = await get_temperature("Toronto")
+    prices = {}
+    for item in await recommend_clothing(temperature):
+        prices[item] = await get_price(item)
+    return prices
+asyncio.run(main())
+"""
 
 _AUTO_APPROVE_ALL = AgentConfig(approval_policy=ToolApprovalPolicy.dangerously_skip_all())
 
@@ -382,6 +397,20 @@ async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path:
                 {"file_path": str(denied_file), "content": "denied"},
                 msg_id=f"msg_{call_count}",
             )
+        if "Deny code mode." in text:
+            return _sse_tool_use(
+                "toolu_code_deny",
+                "mcp__agent_kit__run_code",
+                {"script": "await get_temperature('Toronto')"},
+                msg_id=f"msg_{call_count}",
+            )
+        if "Run code mode." in text:
+            return _sse_tool_use(
+                "toolu_code_1",
+                "mcp__agent_kit__run_code",
+                {"script": _CODE_SCRIPT},
+                msg_id=f"msg_{call_count}",
+            )
         if "Run steered tool." in text:
             return _sse_tool_use(
                 "toolu_code_steer",
@@ -437,37 +466,66 @@ async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path:
                         ] == [False]
                         assert not denied_file.exists()
 
-                        # Turn 3: Steering claimed mid-tool (PostToolUse)
+                        # Turn 3: Agent Kit MCP tool (run_code) denied by human
+                        ev3 = await _send_turn(client, "Deny code mode.", approve=False, deny_reason="Too risky")
+                        assert "Too risky" in _reply_text(ev3)
+                        assert [e.event.approved for e in ev3 if isinstance(e.event, ToolApprovalResolved)] == [False]
+                        assert [e for e in ev3 if isinstance(e.event, ToolStartEvent)] == [], [e.event for e in ev3]
+                        assert [e for e in ev3 if isinstance(e.event, ToolErrorEvent)] == []
+                        _assert_each_model_tool_call_requested_first(ev3)
+
+                        # Turn 4: Code Mode (Agent Kit MCP run_code) + inner Agent Kit tools approved by human
+                        ev4 = await _send_turn(client, "Run code mode.", approve=True)
+                        expected_code_result = "result: {'wool coat': 49.99, 'scarf': 49.99, 'boots': 49.99}"
+                        assert expected_code_result in _reply_text(ev4)
+                        assert [
+                            (e.event.tool_name, e.event.tool_output)
+                            for e in ev4
+                            if isinstance(e.event, ToolEndEvent)
+                        ] == [
+                            ("get_temperature", 8),
+                            ("recommend_clothing", ["wool coat", "scarf", "boots"]),
+                            ("get_price", 49.99),
+                            ("get_price", 49.99),
+                            ("get_price", 49.99),
+                            ("run_code", expected_code_result),
+                        ]
+                        assert any(
+                            isinstance(e.event, ToolRequested) and e.event.tool_name == "run_code" for e in ev4
+                        )
+                        _assert_each_model_tool_call_requested_first(ev4)
+
+                        # Turn 5: Steering claimed mid-tool (PostToolUse)
                         turn_reached_llm.clear()
-                        turn3_task = asyncio.create_task(_send_turn(client, "Run steered tool.", approve=True))
+                        turn5_task = asyncio.create_task(_send_turn(client, "Run steered tool.", approve=True))
                         await turn_reached_llm.wait()
                         await client.submit_message(
                             ClaudeAgentSDKHelloWorkflow.btw.__name__,
                             {"text": "Make it short."},
                         )
                         hold_turn.set()
-                        ev3 = await turn3_task
-                        (enqueued3,) = _events_of(ev3, AgentEventType.STEERING_ENQUEUED)
-                        (claimed3,) = _events_of(ev3, AgentEventType.STEERING_CLAIMED)
-                        assert claimed3.event.steering_ids == [enqueued3.event.steering_id]
-                        assert not _events_of(ev3, AgentEventType.STEERING_DROPPED)
-                        assert "|STEERED" in _reply_text(ev3)
+                        ev5 = await turn5_task
+                        (enqueued5,) = _events_of(ev5, AgentEventType.STEERING_ENQUEUED)
+                        (claimed5,) = _events_of(ev5, AgentEventType.STEERING_CLAIMED)
+                        assert claimed5.event.steering_ids == [enqueued5.event.steering_id]
+                        assert not _events_of(ev5, AgentEventType.STEERING_DROPPED)
+                        assert "|STEERED" in _reply_text(ev5)
 
-                        # Turn 4: Steering queued during LLM-only turn -> dropped at turn end
+                        # Turn 6: Steering queued during LLM-only turn -> dropped at turn end
                         turn_reached_llm.clear()
-                        turn4_task = asyncio.create_task(_send_turn(client, "Write a poem."))
+                        turn6_task = asyncio.create_task(_send_turn(client, "Write a poem."))
                         await turn_reached_llm.wait()
                         await client.submit_message(
                             ClaudeAgentSDKHelloWorkflow.btw.__name__,
                             {"text": "Too late."},
                         )
                         hold_turn.set()
-                        ev4 = await turn4_task
-                        (enqueued4,) = _events_of(ev4, AgentEventType.STEERING_ENQUEUED)
-                        (dropped4,) = _events_of(ev4, AgentEventType.STEERING_DROPPED)
-                        assert dropped4.event.steering_ids == [enqueued4.event.steering_id]
-                        assert not _events_of(ev4, AgentEventType.STEERING_CLAIMED)
-                        assert "Write a poem." in _reply_text(ev4)
+                        ev6 = await turn6_task
+                        (enqueued6,) = _events_of(ev6, AgentEventType.STEERING_ENQUEUED)
+                        (dropped6,) = _events_of(ev6, AgentEventType.STEERING_DROPPED)
+                        assert dropped6.event.steering_ids == [enqueued6.event.steering_id]
+                        assert not _events_of(ev6, AgentEventType.STEERING_CLAIMED)
+                        assert "Write a poem." in _reply_text(ev6)
 
                         # Clean close
                         await handle.signal("close")

@@ -28,6 +28,24 @@ with workflow.unsafe.imports_passed_through():
 TASK_QUEUE = "claude-agent-sdk-hello"
 
 
+@agent.tool_defn()
+async def get_temperature(city: str) -> int:
+    """Return the current temperature in a city, in degrees Celsius."""
+    return 8
+
+
+@agent.tool_defn()
+async def recommend_clothing(temperature: int) -> list[str]:
+    """Return the clothes to wear at a temperature in degrees Celsius."""
+    return ["wool coat", "scarf", "boots"]
+
+
+@agent.tool_defn()
+async def get_price(item: str) -> float:
+    """Return the price of a clothing item, in US dollars."""
+    return 49.99
+
+
 @agent.defn(name="ClaudeAgentSDKHello")
 class ClaudeAgentSDKHelloWorkflow:
     @agent.init
@@ -43,6 +61,7 @@ class ClaudeAgentSDKHelloWorkflow:
                 tools=["Agent", "Skill", "Write"],
             ),
             runner=self._runner,
+            tools=[agent.code_mode_tool([get_temperature, recommend_clothing, get_price], name="run_code")],
         )
 
     @agent.setup

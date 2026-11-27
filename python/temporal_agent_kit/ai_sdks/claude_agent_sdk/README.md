@@ -9,7 +9,8 @@ Install with `uv add 'temporal-agent-kit[claude-agent-sdk]'`. Import `ClaudeAgen
 
 Register `ClaudeAgentSDKPlugin(event_publisher=AgentKitEventPublisher)` and `AgentKitPlugin()` on
 the Worker, and use `AgentKitClaudeSDKClient` as you would `ClaudeSDKClient`. It streams Claude's replies,
-thinking, and model calls to the Agent Kit turn. Create it in `@agent.init`, connect it in `@agent.setup`, and disconnect it in
+thinking, and model calls to the Agent Kit turn, and gates tool calls with the agent's approval
+policy. Create it in `@agent.init`, connect it in `@agent.setup`, and disconnect it in
 `@agent.teardown`:
 
 ```python
@@ -38,7 +39,8 @@ async def disconnect(self) -> None:
 ```
 
 If the Worker running Claude Code is lost, or Claude Code stops mid-turn, the client repeats the
-turn: it starts Claude Code again after the last finished turn, and sends the prompt again.
+turn: it denies the approvals still pending, fails the tool calls still running, starts Claude
+Code again after the last finished turn, and sends the prompt again.
 
 See the [Claude Agent SDK Hello example](../../../examples/claude_agent_sdk_hello).
 

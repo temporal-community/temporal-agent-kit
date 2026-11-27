@@ -13,6 +13,7 @@ with workflow.unsafe.imports_passed_through():
         MidTurn,
         TextMessage,
         TextReply,
+        ToolApprovalPolicy,
     )
     from temporal_agent_kit.agent_workflow import AgentWorkflowRunner
     from temporal_agent_kit.ai_sdks.claude_agent_sdk import (
@@ -30,9 +31,13 @@ class ClaudeAgentSDKHelloWorkflow:
         self._runner = AgentWorkflowRunner(
             config,
             stream=WorkflowStream(),
+            approval_policy_default=ToolApprovalPolicy.allow_inherently_safe(),
         )
         self._client = AgentKitClaudeSDKClient(
-            ClaudeAgentOptions(setting_sources=[]),
+            ClaudeAgentOptions(
+                setting_sources=[],
+                tools=["Agent", "Skill", "Write"],
+            ),
             runner=self._runner,
         )
 

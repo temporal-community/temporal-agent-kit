@@ -41,6 +41,7 @@ py_library(
     imports = ["../../.."],
     visibility = ["//python:__subpackages__"],
     deps = [
+        ":_agent_kit_mcp_server",
         ":_types",
         "//python/temporal_agent_kit:agent_workflow",
         "//python/temporal_agent_kit:stream_context",
@@ -132,6 +133,7 @@ py_library(
     imports = ["../../.."],
     visibility = ["//python:__subpackages__"],
     deps = [
+        ":_agent_kit_mcp_server",
         ":_client",
         ":_types",
         "//python/temporal_agent_kit:agent_workflow",
@@ -139,5 +141,20 @@ py_library(
         "//python/temporal_agent_kit/agent_protocol:__init__",
         "@pypi//claude_agent_sdk",
         "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "_agent_kit_mcp_server",
+    srcs = ["_agent_kit_mcp_server.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        "//python/temporal_agent_kit:agent_workflow",
+        "@pypi//claude_agent_sdk",
+        "@pypi//mcp",
+        "@pypi//mcp_types",
+        "@pypi//pydantic",
+        "@pypi//pydantic_core",
     ],
 )

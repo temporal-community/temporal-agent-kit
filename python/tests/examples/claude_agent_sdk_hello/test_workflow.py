@@ -7,6 +7,7 @@ Anthropic ``/v1/messages`` SSE server, using ``AgentClient`` interfaces.
 1. ``test_full_session_lifecycle`` — one long-running workflow exercising all healthy
    scenarios in sequence on a single real Claude Code process:
    - plain LLM turn
+   - built-in tool (Write) approved, then denied, by human
    - clean close
 
 2. Four isolated disaster recovery tests (the real failure modes in production):
@@ -38,12 +39,16 @@ from temporal_agent_kit.agent_client import AgentClient
 from temporal_agent_kit.agent_protocol import (
     AgentConfig,
     AgentEvent,
+    AgentEventType,
     MessageHandlerEnd,
     ModelInteractionEnded,
     ModelInteractionStarted,
     ReplyDelta,
     TextReply,
     ToolApprovalPolicy,
+    ToolApprovalResolved,
+    ToolEndEvent,
+    ToolRequested,
 )
 from temporal_agent_kit.ai_sdks.claude_agent_sdk import AgentKitEventPublisher, ClaudeAgentSDKPlugin
 from temporal_agent_kit.ai_sdks.claude_agent_sdk._constants import (
@@ -86,6 +91,50 @@ def _sse_text(text: str, *, msg_id: str = "msg_1") -> bytes:
         (
             "message_delta",
             {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None}, "usage": {"output_tokens": 5}},
+        ),
+        ("message_stop", {"type": "message_stop"}),
+    ]
+    return "".join(f"event: {name}\ndata: {json.dumps(payload)}\n\n" for name, payload in events).encode()
+
+
+def _sse_tool_use(tool_id: str, name: str, tool_input: dict[str, Any], *, msg_id: str = "msg_tool") -> bytes:
+    events = [
+        (
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": msg_id,
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "claude-sonnet-4-5-20250929",
+                    "content": [],
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "usage": {"input_tokens": 10, "output_tokens": 1},
+                },
+            },
+        ),
+        (
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "tool_use", "id": tool_id, "name": name, "input": {}},
+            },
+        ),
+        (
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": json.dumps(tool_input)},
+            },
+        ),
+        ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        (
+            "message_delta",
+            {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 10}},
         ),
         ("message_stop", {"type": "message_stop"}),
     ]
@@ -212,6 +261,19 @@ def _signal_claude_children(sig: signal.Signals) -> int:
     return signalled
 
 
+def _assert_each_model_tool_call_requested_first(events: list[AgentEvent]) -> None:
+    """Each tool call the model made has one ToolRequested, published before its other events."""
+    by_tool: dict[str, list[Any]] = {}
+    for ev in events:
+        tool_id = getattr(ev.event, "tool_id", None)
+        if tool_id is not None and tool_id.startswith("toolu_"):
+            by_tool.setdefault(tool_id, []).append(ev.event)
+    assert by_tool, [e.event for e in events]
+    for tool_id, tool_events in by_tool.items():
+        assert isinstance(tool_events[0], ToolRequested), (tool_id, tool_events)
+        assert sum(isinstance(e, ToolRequested) for e in tool_events) == 1, (tool_id, tool_events)
+
+
 def _reply_text(events: list[AgentEvent]) -> str:
     for ev in reversed(events):
         if isinstance(ev.event, MessageHandlerEnd):
@@ -248,9 +310,11 @@ async def _send_turn(
     client: AgentClient,
     text: str,
     *,
+    approve: bool | None = None,
+    deny_reason: str = "Too risky",
     timeout: float = 30,
 ) -> list[AgentEvent]:
-    """Send one ``ask`` turn via ``AgentClient.send_message``."""
+    """Send one ``ask`` turn via ``AgentClient.send_message`` and optionally answer approval gates."""
     collected: list[AgentEvent] = []
     stream = await client.send_message(
         ClaudeAgentSDKHelloWorkflow.ask.__name__,
@@ -262,6 +326,12 @@ async def _send_turn(
         if not isinstance(item, AgentEvent):
             continue
         collected.append(item)
+        if item.event.type == AgentEventType.TOOL_APPROVAL_REQUESTED and approve is not None:
+            await client.approve_tool(
+                item.event.tool_id,
+                approved=approve,
+                reason=None if approve else deny_reason,
+            )
     return collected
 
 
@@ -271,6 +341,8 @@ async def _send_turn(
 
 
 async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    approved_file = tmp_path / "approved.txt"
+    denied_file = tmp_path / "denied.txt"
     call_count = 0
 
     async def respond(body: dict[str, Any]) -> bytes:
@@ -278,6 +350,23 @@ async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path:
         call_count += 1
         text = _last_user_text(body)
 
+        if "TOOL_RESULT:" in text:
+            return _sse_text(f"AFTER_TOOL:{text}", msg_id=f"msg_{call_count}")
+
+        if "Approve write." in text:
+            return _sse_tool_use(
+                "toolu_write_approve",
+                "Write",
+                {"file_path": str(approved_file), "content": "approved"},
+                msg_id=f"msg_{call_count}",
+            )
+        if "Deny write." in text:
+            return _sse_tool_use(
+                "toolu_write_deny",
+                "Write",
+                {"file_path": str(denied_file), "content": "denied"},
+                msg_id=f"msg_{call_count}",
+            )
         return _sse_text(f"ECHO:{text.strip()}", msg_id=f"msg_{call_count}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -290,12 +379,12 @@ async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path:
                     task_queue=task_queue,
                     workflows=[ClaudeAgentSDKHelloWorkflow],
                     plugins=[ClaudeAgentSDKPlugin(event_publisher=AgentKitEventPublisher), AgentKitPlugin()],
-                    # Evict after every task, so the workflow replays.
+                    # Evict after every task, so the workflow replays while approvals are pending.
                     max_cached_workflows=0,
                 ):
                     handle = await env.client.start_workflow(
                         "ClaudeAgentSDKHello",
-                        _AUTO_APPROVE_ALL,
+                        AgentConfig(approval_policy=ToolApprovalPolicy.always_require_human_approval()),
                         id=task_queue,
                         task_queue=task_queue,
                     )
@@ -308,6 +397,23 @@ async def test_full_session_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path:
                         assert any(isinstance(e.event, ModelInteractionStarted) for e in ev1)
                         assert any(isinstance(e.event, ModelInteractionEnded) for e in ev1)
                         assert any(isinstance(e.event, ReplyDelta) for e in ev1)
+
+                        # Turn 2: Built-in tool (Write) approved by human, then denied
+                        ev2 = await _send_turn(client, "Approve write.", approve=True)
+                        assert "AFTER_TOOL:" in _reply_text(ev2)
+                        assert [e.event.approved for e in ev2 if isinstance(e.event, ToolApprovalResolved)] == [True]
+                        assert any(
+                            isinstance(e.event, ToolEndEvent) and e.event.tool_name == "Write" for e in ev2
+                        ), [e.event for e in ev2]
+                        assert approved_file.read_text() == "approved"
+                        _assert_each_model_tool_call_requested_first(ev2)
+
+                        ev2_deny = await _send_turn(client, "Deny write.", approve=False, deny_reason="No writes")
+                        assert "No writes" in _reply_text(ev2_deny)
+                        assert [
+                            e.event.approved for e in ev2_deny if isinstance(e.event, ToolApprovalResolved)
+                        ] == [False]
+                        assert not denied_file.exists()
 
                         # Clean close
                         await handle.signal("close")

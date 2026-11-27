@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from claude_agent_sdk import StreamEvent
+from claude_agent_sdk import AssistantMessage, StreamEvent, ToolUseBlock
 from claude_agent_sdk._internal.message_parser import parse_message
 
 from temporal_agent_kit.agent_protocol import (
@@ -16,8 +16,10 @@ from temporal_agent_kit.agent_protocol import (
     TextAnnotationDelta,
     ThoughtSummaryDelta,
     TokenUsage,
+    ToolRequested,
 )
 from temporal_agent_kit.agent_workflow import _CURRENT_STREAM_CONTEXT, AgentWorkflowRunner
+from temporal_agent_kit.ai_sdks.claude_agent_sdk._agent_kit_mcp_server import agent_kit_tool_name
 from temporal_agent_kit.ai_sdks.claude_agent_sdk._types import Output
 from temporal_agent_kit.stream_context import TurnStreamContext
 
@@ -81,12 +83,23 @@ class AgentKitEventPublisher:
         match message.get("type"):
             case "stream_event":
                 await self._publish_stream_event_message(message)
+            case "assistant":
+                await self._publish_tool_requests(message)
 
     async def _publish(self, event: AgentStreamItem) -> None:
         """Add an event for the message being published."""
         if self._context:
             async with AgentWorkflowRunner.publisher_from_activity(self._context) as publisher:
                 publisher.publish(event)
+
+    async def _publish_tool_requests(self, message: Output) -> None:
+        """Publish a ToolRequested for each tool call in an assistant message. Claude Code sends it before running them."""
+        assistant = parse_message(message)
+        assert isinstance(assistant, AssistantMessage)
+        for block in assistant.content:
+            if isinstance(block, ToolUseBlock):
+                tool_name = agent_kit_tool_name(block.name) or block.name
+                await self._publish(ToolRequested(tool_id=block.id, tool_name=tool_name, tool_input=block.input))
 
     async def _publish_stream_event_message(self, message: Output) -> None:
         """Publish the events for a stream_event message, which wraps one Anthropic API stream event."""
